@@ -2,7 +2,7 @@
 
 #include "esp_err.h"
 #include <stdbool.h>
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 
 #define CH422G_I2C_PORT I2C_NUM_0
 #define CH422G_I2C_ADDR 0x44

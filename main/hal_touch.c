@@ -13,6 +13,11 @@ static esp_lcd_touch_handle_t tp = NULL;
 static lv_indev_t *lvgl_indev = NULL;
 static i2c_master_bus_handle_t i2c_bus = NULL;
 
+i2c_master_bus_handle_t hal_touch_get_i2c_bus(void)
+{
+    return i2c_bus;
+}
+
 esp_err_t hal_touch_init(lv_display_t *display, lv_indev_t **out_indev)
 {
     esp_lcd_panel_io_handle_t io_handle = NULL;

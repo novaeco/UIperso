@@ -12,3 +12,4 @@
 
 esp_err_t hal_touch_init(lv_display_t *display, lv_indev_t **out_indev);
 void hal_touch_read(lv_indev_t *indev, lv_indev_data_t *data);
+i2c_master_bus_handle_t hal_touch_get_i2c_bus(void);
