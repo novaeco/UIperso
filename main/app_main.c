@@ -43,8 +43,7 @@ void app_main(void)
     lvgl_cfg.task_stack = 8192;
     lvgl_cfg.timer_period_ms = 5;
     lvgl_cfg.task_affinity = 1;
-    lvgl_cfg.spinlock_wait_time_ms = 100;
-    lvgl_cfg.mutex = lvgl_mutex;
+    lvgl_cfg.task_max_sleep_ms = 100;
     ESP_ERROR_CHECK(lvgl_port_init(&lvgl_cfg));
 
     lv_display_t *display = NULL;

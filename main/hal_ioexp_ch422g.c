@@ -1,4 +1,5 @@
 #include "hal_ioexp_ch422g.h"
+#include "esp_check.h"
 #include "esp_log.h"
 #include "driver/i2c.h"
 #include "freertos/FreeRTOS.h"
