@@ -442,6 +442,10 @@ static void create_keyboard(void)
         "q", "s", "d", "f", "g", "h", "j", "k", "l", "m", "ù", "ç", "\n",
         "w", "x", "c", "v", "b", "n", ",", ";", ":", "?", "!", "à", "\n",
         LV_SYMBOL_OK, " ", LV_SYMBOL_CLOSE, ""
+        "a", "z", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "", "",
+        "q", "s", "d", "f", "g", "h", "j", "k", "l", "m", "ù", "", "",
+        "w", "x", "c", "v", "b", "n", ",", ";", ":", "?", "!", "é", "è",
+        LV_SYMBOL_OK, " ", LV_SYMBOL_CLOSE, "à", "ç", NULL
     };
 
     ui_KbAzerty = lv_keyboard_create(lv_layer_top());

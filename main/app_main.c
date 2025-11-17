@@ -34,6 +34,7 @@ static void display_flush(lv_display_t *display, const lv_area_t *area, uint8_t 
     (void)area;
     (void)px_map;
     lv_display_flush_ready(display);
+    lv_display_flush_ready(disp);
 }
 
 static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
@@ -64,6 +65,7 @@ static void lvgl_init_display(void)
 
     disp = lv_display_create(LVGL_HOR_RES, LVGL_VER_RES);
     lv_display_set_flush_cb(disp, display_flush);
+    lv_display_set_flush_cb(disp, display_flush, NULL);
     lv_display_set_buffers(disp, buf1, buf2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 }
 
@@ -72,6 +74,7 @@ static void lvgl_init_touch(void)
     touch_indev = lv_indev_create();
     lv_indev_set_type(touch_indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(touch_indev, touch_read);
+    lv_indev_set_read_cb(touch_indev, touch_read, NULL);
 }
 
 void app_main(void)

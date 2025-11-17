@@ -30,6 +30,7 @@ extern lv_obj_t *ui_taSsid;
 extern lv_obj_t *ui_taPassword;
 
 void ui_init(void);
+void ui_build_styles(void);
 lv_obj_t *ui_get_screen(ui_screen_id_t id);
 lv_obj_t *ui_get_status_bar(ui_screen_id_t id);
 void ui_set_status_targets(ui_screen_id_t id);
