@@ -18,6 +18,10 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 Si la configuration CMake échoue après une mise à jour d’ESP-IDF, vérifiez que l’environnement est chargé
 (`export.bat`/`export.ps1`) et relancez une configuration propre :
+### Dépannage rapide (Windows / argtable3)
+
+Si `idf.py set-target` ou `idf.py build` échoue avec `file COPY cannot find ... argtable3.h`,
+vérifiez votre environnement ESP-IDF puis relancez la configuration :
 
 ```powershell
 python tools/validate_idf_env.py
@@ -26,6 +30,7 @@ idf.py set-target esp32s3
 ```
 
 Les étapes détaillées sont décrites dans `docs/BUILD_TROUBLESHOOTING.md` (nettoyage complet, vérification de la version ESP-IDF et des dépendances).
+Les étapes détaillées sont décrites dans `docs/BUILD_TROUBLESHOOTING.md`.
 
 ## Notes d’intégration
 - Backlight piloté par LEDC (PWM 20 kHz) sur `BACKLIGHT_GPIO` (configurable dans `app_hw.c`).
