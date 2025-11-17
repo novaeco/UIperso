@@ -23,3 +23,6 @@ idf.py -p /dev/ttyUSB0 flash monitor
 - Clavier AZERTY complet (lettres, chiffres, ponctuation, accents) et écran de verrouillage PIN.
 
 Consultez `docs/UI_SPEC.md` pour la correspondance exacte des IDs SquareLine et la palette/styles à appliquer dans SquareLine Studio 1.5.4.
+- Documentation fonctionnelle : `docs/UI_SPEC.md`
+- Squelette code ESP-IDF : fichiers dans `main/` (app_main, ui_init, app_hw) + `sdkconfig.defaults`, `partitions.csv`.
+- Les callbacks et drivers hardware sont fournis sous forme de stubs à compléter.
