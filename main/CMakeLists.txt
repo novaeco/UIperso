@@ -4,7 +4,8 @@ idf_component_register(
         "ui_init.c"
         "app_hw.c"
     INCLUDE_DIRS "."
-    REQUIRES lvgl esp_timer esp_wifi esp_event esp_netif nvs_flash driver esp_lcd esp_vfs_fat freertos
+    # esp_vfs_fat merged into fatfs in IDF 5.x+; use fatfs to pull in SD card VFS helpers
+    REQUIRES lvgl esp_timer esp_wifi esp_event esp_netif nvs_flash driver esp_lcd fatfs freertos
 )
 
 # TODO: ajouter fichiers générés SquareLine (ui.c, ui_helpers.c, ui_events.c) dans SRCS quand disponibles
