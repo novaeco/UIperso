@@ -20,6 +20,7 @@ idf_component_register(
         driver
         esp_lcd
         esp_lcd_touch
+        esp_lcd_touch_gt911
         nvs_flash
         esp_timer
         fatfs
