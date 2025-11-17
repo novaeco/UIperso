@@ -14,6 +14,8 @@
 #include "driver/twai.h"
 #include "esp_heap_caps.h"
 #include "esp_clk.h"
+#include "esp_system.h"
+#include "lvgl.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -26,6 +28,7 @@ static sdmmc_card_t *s_card = NULL;
 static esp_netif_t *s_netif = NULL;
 static bool s_backlight_init = false;
 static bool s_twai_started = false;
+static bool s_touch_test_active = false;
 
 // Backlight PWM sur LEDC channel 0 (GPIO configurable via menuconfig)
 #define BACKLIGHT_GPIO    2
@@ -158,48 +161,7 @@ void hw_comm_set_rs485_baudrate(uint32_t baudrate) {
     };
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, 2048, 0, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &cfg));
-#include "esp_log.h"
-#include "esp_timer.h"
-#include "lvgl.h"
-
-static const char *TAG = "app_hw_stub";
-static uint64_t s_boot_time_ms;
-static uint32_t s_reboot_count;
-
-void hw_backlight_set_level(uint8_t level) {
-    ESP_LOGI(TAG, "Backlight set to %u%%", level);
-    // TODO: implémenter contrôle PWM/backlight
-}
-
-esp_err_t hw_network_connect(const char *ssid, const char *password) {
-    ESP_LOGI(TAG, "Connecting to SSID:%s", ssid ? ssid : "");
-    // TODO: implémenter Wi-Fi station + sécurité
-    return ESP_OK;
-}
-
-void hw_network_disconnect(void) {
-    ESP_LOGI(TAG, "Wi-Fi disconnect");
-    // TODO: implémenter déconnexion Wi-Fi
-}
-
-void hw_sdcard_refresh_status(void) {
-    ESP_LOGI(TAG, "Refreshing SD status");
-    // TODO: implémenter détection/montage SD
-}
-
-bool hw_sdcard_is_mounted(void) {
-    // TODO: retourner l'état réel
-    return false;
-}
-
-void hw_comm_set_can_baudrate(uint32_t baudrate) {
-    ESP_LOGI(TAG, "Set CAN baudrate: %u", baudrate);
-    // TODO: implémenter driver CAN
-}
-
-void hw_comm_set_rs485_baudrate(uint32_t baudrate) {
-    ESP_LOGI(TAG, "Set RS485 baudrate: %u", baudrate);
-    // TODO: implémenter driver RS485
+    ESP_LOGI(TAG, "RS485 baudrate réglé à %u", baudrate);
 }
 
 void hw_diag_get_stats(hw_diag_stats_t *out) {
@@ -207,9 +169,6 @@ void hw_diag_get_stats(hw_diag_stats_t *out) {
     out->cpu_freq_mhz = esp_clk_cpu_freq() / 1000000UL;
     out->ram_free_kb = heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024;
     out->psram_free_kb = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024;
-    out->cpu_freq_mhz = 240; // TODO: récupérer fréquence réelle
-    out->ram_free_kb = 0;    // TODO: heap_caps_get_free_size
-    out->psram_free_kb = 0;  // TODO: heap_caps_get_free_size(MALLOC_CAP_SPIRAM)
     uint64_t now = esp_timer_get_time() / 1000ULL;
     out->uptime_ms = now - s_boot_time_ms;
     out->reboot_count = s_reboot_count;
@@ -217,8 +176,6 @@ void hw_diag_get_stats(hw_diag_stats_t *out) {
     out->lvgl_version = LVGL_VERSION_STRING;
     out->idf_version = esp_get_idf_version();
 }
-
-static bool s_touch_test_active = false;
 
 void hw_touch_start_test(void) {
     s_touch_test_active = true;
@@ -230,14 +187,6 @@ void hw_touch_stop_test(void) {
         ESP_LOGI(TAG, "Touch test stop");
     }
     s_touch_test_active = false;
-void hw_touch_start_test(void) {
-    ESP_LOGI(TAG, "Touch test start");
-    // TODO: configurer callback de test
-}
-
-void hw_touch_stop_test(void) {
-    ESP_LOGI(TAG, "Touch test stop");
-    // TODO: arrêter test tactile
 }
 
 static void __attribute__((constructor)) hw_boot_time_init(void) {

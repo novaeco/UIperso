@@ -101,13 +101,6 @@ static void init_touch_driver(void) {
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = touch_read_stub;
     lv_indev_drv_register(&indev_drv);
-static void init_display_driver(void) {
-    // TODO: implémenter driver RGB 1024x600 + buffers DMA/PSRAM
-    // Exemple : enregistrer lv_display_t* avec lv_display_create();
-}
-
-static void init_touch_driver(void) {
-    // TODO: implémenter driver GT911 -> lv_indev_drv_t
 }
 
 void app_main(void) {
