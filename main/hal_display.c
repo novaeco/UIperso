@@ -1,9 +1,13 @@
+#include <stdbool.h>
 #include "hal_display.h"
 #include "esp_log.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esp_lcd_types.h"
 #include "esp_pm.h"
+#if CONFIG_SPIRAM_SUPPORT
+#include "esp_psram.h"
+#endif
 #include "driver/gpio.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_interface.h"
@@ -30,6 +34,12 @@ esp_err_t hal_display_init(lv_display_t **out_display)
     };
     ESP_ERROR_CHECK(gpio_config(&bk_cfg));
     gpio_set_level(LCD_PIN_NUM_BACKLIGHT, 0);
+
+#if CONFIG_SPIRAM_SUPPORT
+    bool use_psram = esp_psram_is_initialized();
+#else
+    bool use_psram = false;
+#endif
 
     esp_lcd_rgb_panel_config_t panel_config = {
         .data_width = 16,
@@ -74,7 +84,7 @@ esp_err_t hal_display_init(lv_display_t **out_display)
             LCD_PIN_NUM_DATA15,
         },
         .flags = {
-            .fb_in_psram = true,
+            .fb_in_psram = use_psram,
         },
     };
 
@@ -94,10 +104,12 @@ esp_err_t hal_display_init(lv_display_t **out_display)
     ESP_ERROR_CHECK(esp_lcd_panel_reset(rgb_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(rgb_panel));
 
+    size_t buffer_height = use_psram ? 80 : 40;
+
     lvgl_port_display_cfg_t disp_cfg = {
         .panel_handle = rgb_panel,
-        .buffer_size = LCD_H_RES * 80,
-        .double_buffer = true,
+        .buffer_size = LCD_H_RES * buffer_height,
+        .double_buffer = use_psram,
         .hres = LCD_H_RES,
         .vres = LCD_V_RES,
         .monochrome = false,
@@ -106,6 +118,8 @@ esp_err_t hal_display_init(lv_display_t **out_display)
             .buff_dma = true,
         },
     };
+
+    ESP_LOGI(TAG, "LVGL buffer: %s, %d lines, double buffer %s", use_psram ? "PSRAM" : "internal RAM", (int)buffer_height, use_psram ? "enabled" : "disabled");
 
     lvgl_display = lvgl_port_add_disp(&disp_cfg);
     if (!lvgl_display)
