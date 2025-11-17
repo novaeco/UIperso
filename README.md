@@ -14,6 +14,10 @@ idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
+### Dépannage rapide (Windows)
+
+Si la configuration CMake échoue après une mise à jour d’ESP-IDF, vérifiez que l’environnement est chargé
+(`export.bat`/`export.ps1`) et relancez une configuration propre :
 ### Dépannage rapide (Windows / argtable3)
 
 Si `idf.py set-target` ou `idf.py build` échoue avec `file COPY cannot find ... argtable3.h`,
@@ -25,6 +29,7 @@ idf.py fullclean
 idf.py set-target esp32s3
 ```
 
+Les étapes détaillées sont décrites dans `docs/BUILD_TROUBLESHOOTING.md` (nettoyage complet, vérification de la version ESP-IDF et des dépendances).
 Les étapes détaillées sont décrites dans `docs/BUILD_TROUBLESHOOTING.md`.
 
 ## Notes d’intégration

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 """
+Validation rapide de l’environnement ESP-IDF pour ce projet.
+
+Contrôles effectués :
+- `IDF_PATH` est défini et pointe vers une arborescence ESP-IDF valide.
+- La version ESP-IDF détectée est affichée (si le fichier `version.txt` est présent).
+- Avertissements si les outils de build ESP-IDF (idf.py) sont introuvables.
 Quick ESP-IDF environment validation tailored for this project.
 
 Checks:
@@ -48,6 +54,31 @@ def validate_idf_path() -> Path:
     return path
 
 
+def validate_tools(idf_path: Path) -> int:
+    """Check that idf.py exists inside the ESP-IDF tree."""
+
+    idf_py = idf_path / "tools" / "idf.py"
+    if idf_py.is_file():
+        _info(f"idf.py detected: {idf_py}")
+        return 0
+
+    _warn(
+        "idf.py introuvable dans ESP-IDF. Vérifiez votre installation ou réinstallez via idf-env.\n"
+        "Commandes utiles :\n"
+        "  idf.py --version (si disponible)\n"
+        "  idf-env.exe install (Windows)"
+    )
+    return 2
+
+
+def print_idf_version(idf_path: Path) -> None:
+    version_file = idf_path / "version.txt"
+    if version_file.is_file():
+        version = version_file.read_text(encoding="utf-8", errors="ignore").strip()
+        if version:
+            _info(f"ESP-IDF version détectée: {version}")
+            return
+    _warn("Impossible de lire version.txt (ESP-IDF pré-5.x ou installation incomplète).")
 def validate_argtable3_header(idf_path: Path) -> int:
     src_header = idf_path / "components" / "argtable3" / "argtable3" / "src" / "argtable3.h"
     include_dir = idf_path / "components" / "argtable3" / "include"
@@ -73,6 +104,13 @@ def validate_argtable3_header(idf_path: Path) -> int:
 
 def main() -> None:
     idf_path = validate_idf_path()
+    print_idf_version(idf_path)
+    status = validate_tools(idf_path)
+
+    if status == 0:
+        _info("Environnement ESP-IDF détecté : prêt pour la configuration du projet.")
+    else:
+        _warn("Corrigez les avertissements ci-dessus avant de lancer idf.py.")
     status = validate_argtable3_header(idf_path)
 
     if status == 0:
