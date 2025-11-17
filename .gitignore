@@ -1,0 +1,19 @@
+# ESP-IDF build outputs
+/build/
+/sdkconfig
+/sdkconfig.old
+/managed_components/
+
+# IDE files
+.vscode/
+.idea/
+cmake-build-*
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Firmware artifacts
+*.bin
+*.elf
+*.map

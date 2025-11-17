@@ -1,6 +1,6 @@
 # UIperso
 
-Projet ESP-IDF 6.1 + LVGL 9.4 pour carte Waveshare ESP32-S3-Touch-LCD-7B (1024×600). Le code fournit une architecture UI modulaire avec écrans multiples (accueil, réseau, stockage, communication, diagnostics, réglages, test tactile, clavier AZERTY).
+Projet ESP-IDF 6.1 + LVGL 9.4 pour carte Waveshare ESP32-S3-Touch-LCD-7B (1024×600). Le code fournit une architecture UI modulaire avec écrans multiples (accueil, réseau, stockage, communication, diagnostics, réglages, test tactile, clavier AZERTY). Les dépendances LVGL 9.x sont déclarées via `main/idf_component.yml` pour l'écosystème managed components d'ESP-IDF.
 
 ## Cible matérielle
 - ESP32-S3-WROOM-1-N16R8 (16 Mo flash, 8 Mo PSRAM)
@@ -15,10 +15,15 @@ idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
+### Prérequis ESP-IDF 6.1 + LVGL 9.x
+- `idf.py add-dependency` récupère automatiquement `lvgl/lvgl ^9.0.0` grâce à `main/idf_component.yml`.
+- Le `menuconfig` expose les options *UIperso options* (résolution LCD, lignes de buffer LVGL) définies dans `main/Kconfig.projbuild`.
+
 ## Arborescence
 - `CMakeLists.txt` : projet ESP-IDF
 - `sdkconfig.defaults` : options LVGL + PSRAM adaptées à l'ESP32-S3
 - `partitions.csv` : partitions flash avec FAT pour microSD virtuelle
+- `.gitignore` : artefacts de build/IDE ignorés
 - `main/` : sources principales
   - `app_main.c` : init ESP-IDF, LVGL, tâches
   - `ui.c`, `ui.h` : création des écrans LVGL

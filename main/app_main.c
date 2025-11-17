@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
 #include "esp_system.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -13,9 +14,9 @@
 
 #define LVGL_TICK_PERIOD_MS 1
 #define LVGL_TASK_PERIOD_MS 5
-#define LVGL_BUF_LINES 40
-#define LVGL_HOR_RES 1024
-#define LVGL_VER_RES 600
+#define LVGL_BUF_LINES CONFIG_UIPERSO_LVGL_BUF_LINES
+#define LVGL_HOR_RES CONFIG_UIPERSO_LCD_HOR_RES
+#define LVGL_VER_RES CONFIG_UIPERSO_LCD_VER_RES
 
 static const char *TAG = "app_main";
 static lv_display_t *disp;
@@ -34,7 +35,6 @@ static void display_flush(lv_display_t *display, const lv_area_t *area, uint8_t 
     (void)area;
     (void)px_map;
     lv_display_flush_ready(display);
-    lv_display_flush_ready(disp);
 }
 
 static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
@@ -60,12 +60,14 @@ static void lvgl_init_display(void)
     void *buf1 = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     void *buf2 = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf1 || !buf2) {
-        ESP_LOGE(TAG, "Allocation buffers LVGL echouee");
+        ESP_LOGW(TAG, "Allocation buffers LVGL echouee en PSRAM, utilisation de la RAM interne");
+        buf1 = heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        buf2 = heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
 
     disp = lv_display_create(LVGL_HOR_RES, LVGL_VER_RES);
     lv_display_set_flush_cb(disp, display_flush);
-    lv_display_set_flush_cb(disp, display_flush, NULL);
+    lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(disp, buf1, buf2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 }
 
@@ -74,7 +76,7 @@ static void lvgl_init_touch(void)
     touch_indev = lv_indev_create();
     lv_indev_set_type(touch_indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(touch_indev, touch_read);
-    lv_indev_set_read_cb(touch_indev, touch_read, NULL);
+    lv_indev_set_display(touch_indev, disp);
 }
 
 void app_main(void)

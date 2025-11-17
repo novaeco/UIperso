@@ -1,0 +1,21 @@
+menu "UIperso options"
+
+config UIPERSO_LCD_HOR_RES
+    int "Résolution horizontale LCD"
+    default 1024
+    help
+        Largeur du panneau RGB utilisé par LVGL (pixels).
+
+config UIPERSO_LCD_VER_RES
+    int "Résolution verticale LCD"
+    default 600
+    help
+        Hauteur du panneau RGB utilisé par LVGL (pixels).
+
+config UIPERSO_LVGL_BUF_LINES
+    int "Lignes du buffer LVGL"
+    default 40
+    help
+        Nombre de lignes RGB565 allouées par tampon. Ajustez en fonction de la PSRAM disponible.
+
+endmenu
