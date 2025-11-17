@@ -437,6 +437,11 @@ static void create_about(void)
 static void create_keyboard(void)
 {
     static const char *azerty_map[] = {
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", LV_SYMBOL_BACKSPACE, "\n",
+        "a", "z", "e", "r", "t", "y", "u", "i", "o", "p", "é", "è", "\n",
+        "q", "s", "d", "f", "g", "h", "j", "k", "l", "m", "ù", "ç", "\n",
+        "w", "x", "c", "v", "b", "n", ",", ";", ":", "?", "!", "à", "\n",
+        LV_SYMBOL_OK, " ", LV_SYMBOL_CLOSE, ""
         "a", "z", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "", "",
         "q", "s", "d", "f", "g", "h", "j", "k", "l", "m", "ù", "", "",
         "w", "x", "c", "v", "b", "n", ",", ";", ":", "?", "!", "é", "è",
