@@ -1,4 +1,0 @@
-dependencies:
-  idf: ">=6.1.0"
-  lvgl/lvgl:
-    version: "^9.1.0"
