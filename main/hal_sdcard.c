@@ -12,6 +12,19 @@ static const char *TAG = "hal_sdcard";
 static sdmmc_card_t *mounted_card = NULL;
 static bool sd_mounted = false;
 
+static void hal_sdcard_set_cs(bool level)
+{
+    if (ch422g_init() == ESP_OK)
+    {
+        // Active low CS on EXIO4
+        ch422g_set_pin(SD_SPI_CS_EXIO, level);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "CH422G not ready for SD CS control");
+    }
+}
+
 esp_err_t hal_sdcard_init(void)
 {
     esp_err_t ret;
@@ -34,7 +47,7 @@ esp_err_t hal_sdcard_init(void)
     host.slot = SD_SPI_HOST;
 
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = SD_SPI_CS;
+    slot_config.gpio_cs = -1; // Manual CS via CH422G EXIO4
     slot_config.host_id = SD_SPI_HOST;
 
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
@@ -43,7 +56,11 @@ esp_err_t hal_sdcard_init(void)
         .allocation_unit_size = 16 * 1024,
     };
 
+    // Select card before mounting
+    hal_sdcard_set_cs(false);
     ret = esp_vfs_fat_sdspi_mount("/sdcard", &host, &slot_config, &mount_config, &mounted_card);
+    hal_sdcard_set_cs(true);
+
     if (ret != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to mount SD card: %s", esp_err_to_name(ret));
@@ -66,14 +83,17 @@ esp_err_t hal_sdcard_write_test(void)
     {
         return ESP_ERR_INVALID_STATE;
     }
+    hal_sdcard_set_cs(false);
     FILE *f = fopen("/sdcard/test.txt", "w");
     if (!f)
     {
+        hal_sdcard_set_cs(true);
         return ESP_FAIL;
     }
     const char *msg = "Hello from ESP32-S3 SD card!\n";
     size_t written = fwrite(msg, 1, strlen(msg), f);
     fclose(f);
+    hal_sdcard_set_cs(true);
     return (written == strlen(msg)) ? ESP_OK : ESP_FAIL;
 }
 
@@ -83,13 +103,16 @@ esp_err_t hal_sdcard_read_test(char *out_buffer, size_t max_len)
     {
         return ESP_ERR_INVALID_STATE;
     }
+    hal_sdcard_set_cs(false);
     FILE *f = fopen("/sdcard/test.txt", "r");
     if (!f)
     {
+        hal_sdcard_set_cs(true);
         return ESP_FAIL;
     }
     size_t read_bytes = fread(out_buffer, 1, max_len - 1, f);
     fclose(f);
+    hal_sdcard_set_cs(true);
     out_buffer[read_bytes] = '\0';
     return (read_bytes > 0) ? ESP_OK : ESP_FAIL;
 }

@@ -5,8 +5,8 @@
 #include <stdbool.h>
 #include "driver/twai.h"
 
-#define CAN_TX_GPIO 43
-#define CAN_RX_GPIO 44
+#define CAN_TX_GPIO 20
+#define CAN_RX_GPIO 19
 
 esp_err_t hal_can_init(void);
 esp_err_t hal_can_send_test_frame(void);

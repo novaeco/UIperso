@@ -13,6 +13,9 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_interface.h"
 #include "esp_lvgl_port.h"
+#include "hal_ioexp_ch422g.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "hal_display";
 static esp_lcd_panel_handle_t rgb_panel = NULL;
@@ -24,17 +27,25 @@ static bool rgb_panel_on_vsync_event(esp_lcd_panel_handle_t panel, const esp_lcd
     return false;
 }
 
+static void hal_display_power_on(void)
+{
+    // Enable VCOM and backlight through IO expander (active high)
+    if (ch422g_init() == ESP_OK)
+    {
+        ch422g_set_pin(LCD_IOEX_VDD_EN, true);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        ch422g_set_pin(LCD_IOEX_BACKLIGHT, true);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "CH422G not ready, skipping LCD power enable");
+    }
+}
+
 esp_err_t hal_display_init(lv_display_t **out_display)
 {
     esp_err_t ret;
-    gpio_config_t bk_cfg = {
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = 1ULL << LCD_PIN_NUM_BACKLIGHT,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .pull_up_en = GPIO_PULLUP_DISABLE
-    };
-    ESP_ERROR_CHECK(gpio_config(&bk_cfg));
-    gpio_set_level(LCD_PIN_NUM_BACKLIGHT, 0);
+    hal_display_power_on();
 
 #if CONFIG_SPIRAM_SUPPORT
     bool use_psram = esp_psram_is_initialized();
@@ -46,7 +57,7 @@ esp_err_t hal_display_init(lv_display_t **out_display)
         .data_width = 16,
         .clk_src = LCD_CLK_SRC_PLL160M,
         .timings = {
-            .pclk_hz = 15000000,
+            .pclk_hz = 30000000,
             .h_res = LCD_H_RES,
             .v_res = LCD_V_RES,
             .hsync_pulse_width = 10,
@@ -128,8 +139,6 @@ esp_err_t hal_display_init(lv_display_t **out_display)
         ESP_LOGE(TAG, "Failed to register LVGL display");
         return ESP_FAIL;
     }
-
-    gpio_set_level(LCD_PIN_NUM_BACKLIGHT, 1);
 
     if (out_display)
     {

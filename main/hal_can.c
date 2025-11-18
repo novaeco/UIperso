@@ -1,12 +1,19 @@
 #include "hal_can.h"
 #include "driver/twai.h"
 #include "esp_log.h"
+#include "hal_ioexp_ch422g.h"
 
 static const char *TAG = "hal_can";
 static bool can_started = false;
 
 esp_err_t hal_can_init(void)
 {
+    // Select CAN transceiver mode via IO expander (EXIO5 high selects CAN)
+    if (ch422g_init() == ESP_OK)
+    {
+        ch422g_set_pin(CH422G_EXIO5, true);
+    }
+
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO, CAN_RX_GPIO, TWAI_MODE_NORMAL);
     g_config.clkout_divider = 0;
     g_config.tx_queue_len = 5;

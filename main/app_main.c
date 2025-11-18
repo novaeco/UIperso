@@ -46,6 +46,12 @@ void app_main(void)
     lvgl_cfg.task_max_sleep_ms = 100;
     ESP_ERROR_CHECK(lvgl_port_init(&lvgl_cfg));
 
+    // Prepare shared I2C bus and IO expander
+    ESP_ERROR_CHECK(hal_touch_bus_init());
+    ESP_ERROR_CHECK(ch422g_init());
+    // Keep board in USB mode by default
+    ch422g_set_pin(CH422G_EXIO5, false);
+
     lv_display_t *display = NULL;
     lv_indev_t *indev = NULL;
     ESP_ERROR_CHECK(hal_display_init(&display));
@@ -54,7 +60,6 @@ void app_main(void)
     ESP_ERROR_CHECK(hal_sdcard_init());
     ESP_ERROR_CHECK(hal_can_init());
     ESP_ERROR_CHECK(hal_rs485_init());
-    ESP_ERROR_CHECK(ch422g_init());
 
     const esp_timer_create_args_t tick_timer_args = {
         .callback = &lvgl_tick,
