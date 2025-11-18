@@ -2,6 +2,8 @@
 #include "esp_log.h"
 #include "esp_lcd_touch.h"
 #include "esp_lcd_touch_gt911.h"
+#include "esp_err.h"
+#include "esp_check.h"
 #include "esp_lvgl_port.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
@@ -10,6 +12,20 @@
 #include "hal_ioexp_ch422g.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+#ifndef ESP_RETURN_ON_ERROR
+#define ESP_RETURN_ON_ERROR(expr, tag, message, ...)                    \
+    do                                                                  \
+    {                                                                   \
+        esp_err_t __err_rc = (expr);                                    \
+        if (__err_rc != ESP_OK)                                         \
+        {                                                               \
+            ESP_LOGE(tag, "%s(%d): " message, __func__, __LINE__,      \
+                     ##__VA_ARGS__);                                    \
+            return __err_rc;                                            \
+        }                                                               \
+    } while (0)
+#endif
 
 static const char *TAG = "hal_touch";
 static esp_lcd_touch_handle_t tp = NULL;
