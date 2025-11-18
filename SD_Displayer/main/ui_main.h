@@ -18,6 +18,9 @@ typedef struct {
     bool sd_present;
     wifi_state_t last_wifi_state;
     bool last_sd_present;
+    char **images;
+    int image_count;
+    int current_index;
 } ui_context_t;
 
 void ui_init(lv_display_t *display, ui_context_t *ctx);

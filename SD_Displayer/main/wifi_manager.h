@@ -29,6 +29,7 @@ typedef struct {
     wifi_state_t state;
     bool ntp_synced;
     bool has_ip;
+    wifi_state_t state;
 } wifi_config_runtime_t;
 
 esp_err_t wifi_manager_init(void);

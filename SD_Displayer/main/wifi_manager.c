@@ -8,6 +8,10 @@
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
+#include "nvs_flash.h"
+#include "lwip/apps/sntp.h"
+#include <string.h>
+#include <time.h>
 
 static const char *TAG = "wifi_mgr";
 static wifi_config_runtime_t runtime_cfg = {0};
@@ -80,6 +84,16 @@ static void load_or_seed_nvs(void)
         updated = true;
     }
 
+
+static void save_defaults_if_absent(void)
+{
+    size_t len = sizeof(runtime_cfg.ssid);
+    esp_err_t err = nvs_get_str(wifi_nvs, "ssid", runtime_cfg.ssid, &len);
+    if (err != ESP_OK)
+    {
+        strlcpy(runtime_cfg.ssid, WIFI_DEFAULT_SSID, sizeof(runtime_cfg.ssid));
+        nvs_set_str(wifi_nvs, "ssid", runtime_cfg.ssid);
+    }
     len = sizeof(runtime_cfg.password);
     err = nvs_get_str(wifi_nvs, "pass", runtime_cfg.password, &len);
     if (err != ESP_OK)
@@ -142,6 +156,19 @@ static void apply_ip_settings(void)
         };
         ESP_ERROR_CHECK(esp_netif_set_ip_info(wifi_netif, &ip_info));
     }
+        nvs_set_str(wifi_nvs, "pass", runtime_cfg.password);
+    }
+    nvs_commit(wifi_nvs);
+}
+
+static void start_sntp(void)
+{
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, "pool.ntp.org");
+    sntp_setservername(1, "fr.pool.ntp.org");
+    setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
+    tzset();
+    sntp_init();
 }
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
@@ -152,6 +179,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         lock();
         runtime_cfg.state = WIFI_STATE_CONNECTING;
         unlock();
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
+    {
+        runtime_cfg.state = WIFI_STATE_CONNECTING;
         esp_wifi_connect();
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
@@ -161,6 +191,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         runtime_cfg.has_ip = false;
         runtime_cfg.ntp_synced = false;
         unlock();
+        runtime_cfg.state = WIFI_STATE_DISCONNECTED;
         esp_wifi_connect();
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
@@ -174,6 +205,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         runtime_cfg.netmask = event->ip_info.netmask;
         runtime_cfg.ntp_synced = false;
         unlock();
+        runtime_cfg.state = WIFI_STATE_CONNECTED;
         start_sntp();
     }
 }
@@ -195,6 +227,12 @@ esp_err_t wifi_manager_init(void)
     wifi_netif = esp_netif_create_default_wifi_sta();
     apply_ip_settings();
 
+    runtime_cfg.state = WIFI_STATE_DISCONNECTED;
+    ESP_ERROR_CHECK(nvs_open("wifi_cfg", NVS_READWRITE, &wifi_nvs));
+    save_defaults_if_absent();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -206,6 +244,7 @@ esp_err_t wifi_manager_init(void)
     wifi_cfg.sta.pmf_cfg.required = false;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
     sntp_set_time_sync_notification_cb(mark_ntp_synced);
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
     return ESP_OK;
 }
 
@@ -220,6 +259,7 @@ esp_err_t wifi_manager_start(void)
     lock();
     runtime_cfg.state = WIFI_STATE_CONNECTING;
     unlock();
+    runtime_cfg.state = WIFI_STATE_CONNECTING;
     return ESP_OK;
 }
 
@@ -230,6 +270,7 @@ wifi_config_runtime_t wifi_manager_get_state(void)
     copy = runtime_cfg;
     unlock();
     return copy;
+    return runtime_cfg;
 }
 
 void wifi_manager_request_reconnect(void)
@@ -295,4 +336,7 @@ bool wifi_manager_is_configured(void)
     configured = runtime_cfg.configured;
     unlock();
     return configured;
+}
+    runtime_cfg.state = WIFI_STATE_CONNECTING;
+    esp_wifi_connect();
 }
