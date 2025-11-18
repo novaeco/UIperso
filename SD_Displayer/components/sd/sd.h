@@ -29,7 +29,7 @@
 #define SD_TAG "sd"          // Log tag for SD card functions
 
 // Define constants for SD card configuration
-#define MOUNT_POINT "/sdcard"                // Mount point for SD card
+#define MOUNT_POINT "/sd"                    // Mount point for SD card (normalized path without spaces)
 #define EXAMPLE_FORMAT_IF_MOUNT_FAILED false // Format SD card if mounting fails
 #define EXAMPLE_PIN_CLK GPIO_NUM_12          // GPIO pin for SD card clock
 #define EXAMPLE_PIN_CMD GPIO_NUM_11          // GPIO pin for SD card command line
