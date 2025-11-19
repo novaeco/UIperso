@@ -17,6 +17,7 @@
 #include "can_driver.h"
 #include "cs8501.h"
 #include "rs485_driver.h"
+#include "ui_manager.h"
 
 static const char *TAG = "MAIN";
 
@@ -24,14 +25,6 @@ static void lvgl_tick_cb(void *arg)
 {
     (void)arg;
     lv_tick_inc(1);
-}
-
-static void touch_btn_event_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED)
-    {
-        ESP_LOGI(TAG, "Touch button clicked");
-    }
 }
 
 void app_main(void)
@@ -91,18 +84,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_timer_create(&tick_timer_args, &tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, 1000));
 
-    lv_obj_t *label = lv_label_create(lv_scr_act());
-    lv_label_set_text(label, "ESP32-S3 UI Phase 4");
-    lv_obj_center(label);
-
-    lv_obj_t *btn = lv_btn_create(lv_scr_act());
-    lv_obj_set_size(btn, 200, 80);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -40);
-    lv_obj_add_event_cb(btn, touch_btn_event_cb, LV_EVENT_ALL, NULL);
-
-    lv_obj_t *btn_label = lv_label_create(btn);
-    lv_label_set_text(btn_label, "Touch me");
-    lv_obj_center(btn_label);
+    ui_manager_init();
 
     while (true)
     {
