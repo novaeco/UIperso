@@ -1,6 +1,9 @@
 #include "dashboard.h"
 
+#include <inttypes.h>
+
 #include "esp_heap_caps.h"
+#include "esp_random.h"
 #include "esp_system.h"
 
 #include "lv_theme_custom.h"
@@ -31,7 +34,7 @@ static void dashboard_update_cb(lv_timer_t *timer)
 
     static uint32_t fake_fps = 58;
     fake_fps = (fake_fps >= 62) ? 58 : fake_fps + 1;
-    lv_label_set_text_fmt(fps_label, "FPS estimé : ~%u", fake_fps);
+    lv_label_set_text_fmt(fps_label, "FPS estimé : ~%" PRIu32, (uint32_t)fake_fps);
 
     uint32_t sample = esp_random() % 100;
     lv_chart_set_next_value(chart, cpu_series, (lv_coord_t)sample);

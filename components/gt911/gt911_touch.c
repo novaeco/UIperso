@@ -9,7 +9,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_driver_gpio.h"
+#include "driver/gpio.h"
 #include "driver/i2c.h"
 
 #define GT911_I2C_ADDRESS              0x5D    // TODO: vérifier l'adresse en fonction du câblage (0x5D/0x14)

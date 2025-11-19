@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "esp_driver_gpio.h"
+#include "driver/gpio.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_rgb.h"
