@@ -36,7 +36,6 @@ typedef struct
     bool valid;
 } gt911_point_t;
 
-static lv_indev_drv_t s_indev_drv;
 static lv_indev_t *s_indev = NULL;
 static gt911_point_t s_last_point;
 static bool s_initialized = false;
@@ -159,9 +158,9 @@ static void gt911_log_identity(void)
     }
 }
 
-static void gt911_lvgl_read(lv_indev_drv_t *drv, lv_indev_data_t *data)
+static void gt911_lvgl_read(lv_indev_t *indev, lv_indev_data_t *data)
 {
-    (void)drv;
+    (void)indev;
 
     gt911_point_t point = {0};
     const bool touched = gt911_poll(&point);
@@ -199,12 +198,10 @@ void gt911_init(void)
     gt911_configure_int_pin();
     gt911_log_identity();
 
-    lv_indev_drv_init(&s_indev_drv);
-    s_indev_drv.type = LV_INDEV_TYPE_POINTER;
-    s_indev_drv.read_cb = gt911_lvgl_read;
-    s_indev_drv.long_press_repeat_time = 0;
-
-    s_indev = lv_indev_drv_register(&s_indev_drv);
+    s_indev = lv_indev_create();
+    lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(s_indev, gt911_lvgl_read);
+    lv_indev_set_display(s_indev, lv_display_get_default());
     if (s_indev == NULL)
     {
         ESP_LOGE(TAG, "Failed to register LVGL input device");
