@@ -3,12 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "driver/gpio.h"
+#include "esp_driver_gpio.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_rgb.h"
-#include "hal/lcd_types.h"
 #include "esp_log.h"
+#include "hal/lcd_types.h"
 
 #define LCD_H_RES                  1024
 #define LCD_V_RES                  600
@@ -39,26 +39,26 @@ static const gpio_num_t s_data_gpio[LCD_DATA_WIDTH] = {
 
 static const char *TAG = "RGB_LCD";
 
-static lv_disp_draw_buf_t s_draw_buf;
-static lv_color_t *s_buf1 = NULL;
-static lv_color_t *s_buf2 = NULL;
-static lv_disp_drv_t s_disp_drv;
-static lv_disp_t *s_disp = NULL;
+static lv_display_t *s_disp = NULL;
 static esp_lcd_panel_handle_t s_panel_handle = NULL;
+static uint8_t *s_buf1 = NULL;
+static uint8_t *s_buf2 = NULL;
 
-static void rgb_lcd_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p)
+static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
-    esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)disp_drv->user_data;
     const int32_t x1 = area->x1;
     const int32_t y1 = area->y1;
     const int32_t x2 = area->x2 + 1;
     const int32_t y2 = area->y2 + 1;
-    esp_err_t err = esp_lcd_panel_draw_bitmap(panel_handle, x1, y1, x2, y2, color_p);
+
+    const uint16_t *buf16 = (const uint16_t *)px_map;
+    const esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel_handle, x1, y1, x2, y2, buf16);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Panel draw failed (%s)", esp_err_to_name(err));
     }
-    lv_disp_flush_ready(disp_drv);
+
+    lv_display_flush_ready(disp);
 }
 
 static void rgb_lcd_init_backlight(void)
@@ -68,7 +68,7 @@ static void rgb_lcd_init_backlight(void)
         return;
     }
 
-    gpio_config_t cfg = {
+    const gpio_config_t cfg = {
         .pin_bit_mask = 1ULL << LCD_PIN_NUM_BACKLIGHT,
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
@@ -86,18 +86,15 @@ void rgb_lcd_init(void)
         return;
     }
 
-    const size_t draw_buf_pixels = LV_HOR_RES_MAX * LVGL_DRAW_BUF_LINES;
-    const size_t draw_buf_size_bytes = draw_buf_pixels * sizeof(lv_color_t);
+    const size_t buf_size = (size_t)LCD_H_RES * LVGL_DRAW_BUF_LINES * LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565);
 
-    s_buf1 = (lv_color_t *)heap_caps_malloc(draw_buf_size_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    s_buf2 = (lv_color_t *)heap_caps_malloc(draw_buf_size_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_buf1 = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
+    s_buf2 = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
     if ((s_buf1 == NULL) || (s_buf2 == NULL))
     {
         ESP_LOGE(TAG, "LVGL draw buffer allocation failed");
         abort();
     }
-
-    lv_disp_draw_buf_init(&s_draw_buf, s_buf1, s_buf2, draw_buf_pixels);
 
     esp_lcd_rgb_timing_t timing = {
         .pclk_hz = LCD_PIXEL_CLOCK_HZ,
@@ -135,7 +132,7 @@ void rgb_lcd_init(void)
             s_data_gpio[12], s_data_gpio[13], s_data_gpio[14], s_data_gpio[15],
         },
         .timings = timing,
-        .bounce_buffer_size_px = LV_HOR_RES_MAX * 10,
+        .bounce_buffer_size_px = LCD_H_RES * 10,
         .flags = {
             .fb_in_psram = true,
         },
@@ -146,20 +143,15 @@ void rgb_lcd_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel_handle));
     rgb_lcd_init_backlight();
 
-    lv_disp_drv_init(&s_disp_drv);
-    s_disp_drv.hor_res = LCD_H_RES;
-    s_disp_drv.ver_res = LCD_V_RES;
-    s_disp_drv.flush_cb = rgb_lcd_flush;
-    s_disp_drv.draw_buf = &s_draw_buf;
-    s_disp_drv.user_data = s_panel_handle;
-    s_disp_drv.sw_rotate = 0;
-    s_disp_drv.full_refresh = 0;
+    s_disp = lv_display_create(LCD_H_RES, LCD_V_RES);
+    lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_buffers(s_disp, s_buf1, s_buf2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_flush_cb(s_disp, rgb_lcd_flush);
 
-    s_disp = lv_disp_drv_register(&s_disp_drv);
     ESP_LOGI(TAG, "RGB panel initialized (%dx%d)", LCD_H_RES, LCD_V_RES);
 }
 
-lv_disp_t *rgb_lcd_get_disp(void)
+lv_display_t *rgb_lcd_get_disp(void)
 {
     return s_disp;
 }

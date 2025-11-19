@@ -1,6 +1,6 @@
 #include "rs485_driver.h"
 
-#include "driver/gpio.h"
+#include "esp_driver_gpio.h"
 #include "driver/uart.h"
 #include "esp_log.h"
 

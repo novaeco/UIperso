@@ -2,7 +2,7 @@
 
 #include <inttypes.h>
 
-#include "driver/gpio.h"
+#include "esp_driver_gpio.h"
 #include "esp_log.h"
 
 #define CAN_TX_GPIO GPIO_NUM_43  // TODO: confirm against Waveshare schematics
