@@ -18,7 +18,7 @@ esp_err_t can_bus_init(void)
         return ESP_OK;
     }
 
-    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO, CAN_RX_GPIO, TWAI_MODE_LOOPBACK);
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO, CAN_RX_GPIO, TWAI_MODE_NORMAL);
     g_config.tx_queue_len = 5;
     g_config.rx_queue_len = 5;
     g_config.alerts_enabled = TWAI_ALERT_BUS_OFF | TWAI_ALERT_ERR_PASS | TWAI_ALERT_RX_DATA | TWAI_ALERT_TX_SUCCESS;
