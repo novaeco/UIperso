@@ -8,6 +8,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "lvgl.h"
+#include "driver/i2c.h"
 
 #include "ch422g.h"
 #include "gt911_touch.h"
@@ -20,6 +21,25 @@
 #include "ui_manager.h"
 
 static const char *TAG = "MAIN";
+
+static void i2c_scan_bus(i2c_port_t port)
+{
+    ESP_LOGI(TAG, "I2C scan on port %d", port);
+    for (uint8_t addr = 1; addr < 0x7F; ++addr)
+    {
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_stop(cmd);
+        const esp_err_t err = i2c_master_cmd_begin(port, cmd, pdMS_TO_TICKS(20));
+        i2c_cmd_link_delete(cmd);
+
+        if (err == ESP_OK)
+        {
+            ESP_LOGI(TAG, "  - Device found at 0x%02X", addr);
+        }
+    }
+}
 
 static void lvgl_tick_cb(void *arg)
 {
@@ -36,10 +56,20 @@ void app_main(void)
     esp_chip_info(&chip_info);
     ESP_LOGI(TAG, "Chip model %d, %d core(s), revision %d", chip_info.model, chip_info.cores, chip_info.revision);
 
-    ch422g_init();
-    ESP_ERROR_CHECK(ch422g_set_lcd_power(true));
-    vTaskDelay(pdMS_TO_TICKS(10));
-    ESP_ERROR_CHECK(ch422g_set_backlight(true));
+    esp_err_t ch_err = ch422g_init();
+    if (ch_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "CH422G init failed (0x%x). Running without IO expander features.", ch_err);
+    }
+
+    i2c_scan_bus(ch422g_get_i2c_port());
+
+    if (ch_err == ESP_OK)
+    {
+        ESP_ERROR_CHECK(ch422g_set_lcd_power(true));
+        vTaskDelay(pdMS_TO_TICKS(10));
+        ESP_ERROR_CHECK(ch422g_set_backlight(true));
+    }
 
     lv_init();
     rgb_lcd_init();

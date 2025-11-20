@@ -8,8 +8,8 @@
 #include "driver/i2c.h"
 
 #define CH422G_I2C_PORT            I2C_NUM_0
-#define CH422G_I2C_SDA_GPIO        GPIO_NUM_1   // TODO: vérifier le mapping réel SDA depuis le schéma Waveshare
-#define CH422G_I2C_SCL_GPIO        GPIO_NUM_2   // TODO: vérifier le mapping réel SCL depuis le schéma Waveshare
+#define CH422G_I2C_SDA_GPIO        GPIO_NUM_8   // Waveshare ESP32-S3-Touch-LCD-7B shared I2C SDA
+#define CH422G_I2C_SCL_GPIO        GPIO_NUM_9   // Waveshare ESP32-S3-Touch-LCD-7B shared I2C SCL
 #define CH422G_I2C_SPEED_HZ        400000
 #define CH422G_I2C_TIMEOUT_MS      50
 
@@ -32,6 +32,7 @@ static struct
 {
     bool initialized;
     bool bus_ready;
+    bool device_ready;
     uint8_t output_state;
 } s_ctx;
 
@@ -99,14 +100,14 @@ static esp_err_t ch422g_update_mask(uint8_t mask, bool level_high)
     return ch422g_write_outputs();
 }
 
-void ch422g_init(void)
+esp_err_t ch422g_init(void)
 {
     if (s_ctx.initialized)
     {
-        return;
+        return s_ctx.device_ready ? ESP_OK : ESP_ERR_INVALID_STATE;
     }
 
-    ESP_ERROR_CHECK(ch422g_bus_init());
+    ESP_RETURN_ON_ERROR(ch422g_bus_init(), TAG, "Failed to init I2C bus");
 
     s_ctx.output_state = 0x00;
 
@@ -117,10 +118,19 @@ void ch422g_init(void)
         ESP_LOGW(TAG, "Unable to configure CH422G mode (%s) - check board wiring", esp_err_to_name(cfg_err));
     }
 
-    ESP_ERROR_CHECK(ch422g_write_outputs());
+    const esp_err_t outputs_err = ch422g_write_outputs();
+    if (outputs_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "CH422G not responding on I2C (err=%s). Continuing with IO expander disabled.", esp_err_to_name(outputs_err));
+        s_ctx.initialized = true;
+        s_ctx.device_ready = false;
+        return outputs_err;
+    }
 
     s_ctx.initialized = true;
+    s_ctx.device_ready = true;
     ESP_LOGI(TAG, "CH422G initialized (addr=0x%02X)", CH422G_I2C_ADDRESS);
+    return ESP_OK;
 }
 
 i2c_port_t ch422g_get_i2c_port(void)
@@ -130,19 +140,19 @@ i2c_port_t ch422g_get_i2c_port(void)
 
 esp_err_t ch422g_set_backlight(bool on)
 {
-    ESP_RETURN_ON_FALSE(s_ctx.bus_ready, ESP_ERR_INVALID_STATE, TAG, "CH422G not initialized");
+    ESP_RETURN_ON_FALSE(s_ctx.device_ready, ESP_ERR_INVALID_STATE, TAG, "CH422G not responding");
     return ch422g_update_mask(CH422G_OUTPUT_BACKLIGHT, on);
 }
 
 esp_err_t ch422g_set_lcd_power(bool on)
 {
-    ESP_RETURN_ON_FALSE(s_ctx.bus_ready, ESP_ERR_INVALID_STATE, TAG, "CH422G not initialized");
+    ESP_RETURN_ON_FALSE(s_ctx.device_ready, ESP_ERR_INVALID_STATE, TAG, "CH422G not responding");
     return ch422g_update_mask(CH422G_OUTPUT_LCD_POWER, on);
 }
 
 esp_err_t ch422g_set_touch_reset(bool asserted)
 {
-    ESP_RETURN_ON_FALSE(s_ctx.bus_ready, ESP_ERR_INVALID_STATE, TAG, "CH422G not initialized");
+    ESP_RETURN_ON_FALSE(s_ctx.device_ready, ESP_ERR_INVALID_STATE, TAG, "CH422G not responding");
 #if CH422G_TOUCH_RESET_ACTIVE_LOW
     const bool level_high = !asserted;
 #else
@@ -153,14 +163,14 @@ esp_err_t ch422g_set_touch_reset(bool asserted)
 
 esp_err_t ch422g_select_usb(bool usb_selected)
 {
-    ESP_RETURN_ON_FALSE(s_ctx.bus_ready, ESP_ERR_INVALID_STATE, TAG, "CH422G not initialized");
+    ESP_RETURN_ON_FALSE(s_ctx.device_ready, ESP_ERR_INVALID_STATE, TAG, "CH422G not responding");
     // usb_selected=true routes USB, false routes CAN/alternative interface.
     return ch422g_update_mask(CH422G_OUTPUT_USB_SELECT, usb_selected);
 }
 
 esp_err_t ch422g_set_sdcard_cs(bool asserted)
 {
-    ESP_RETURN_ON_FALSE(s_ctx.bus_ready, ESP_ERR_INVALID_STATE, TAG, "CH422G not initialized");
+    ESP_RETURN_ON_FALSE(s_ctx.device_ready, ESP_ERR_INVALID_STATE, TAG, "CH422G not responding");
     // CS assumed active low on most µSD sockets.
     const bool level_high = !asserted;
     return ch422g_update_mask(CH422G_OUTPUT_SD_CS, level_high);

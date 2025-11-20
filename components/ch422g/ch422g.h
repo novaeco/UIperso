@@ -12,7 +12,7 @@ extern "C" {
 /**
  * @brief Initialize the CH422G GPIO expander and the shared I2C bus.
  */
-void ch422g_init(void);
+esp_err_t ch422g_init(void);
 
 /**
  * @brief Obtain the I2C port used by the CH422G + GT911 devices.

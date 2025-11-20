@@ -188,7 +188,12 @@ void gt911_init(void)
         return;
     }
 
-    ch422g_init();
+    const esp_err_t ch422_err = ch422g_init();
+    if (ch422_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "CH422G init failed (0x%x). Touch driver disabled.", ch422_err);
+        return;
+    }
 
     ESP_ERROR_CHECK(ch422g_set_lcd_power(true));
     vTaskDelay(pdMS_TO_TICKS(10));
