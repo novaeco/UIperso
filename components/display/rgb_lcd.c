@@ -149,6 +149,7 @@ void rgb_lcd_init(void)
     lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(s_disp, s_buf1, s_buf2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(s_disp, rgb_lcd_flush);
+    lv_display_set_default(s_disp);
 
     ESP_LOGI(TAG, "RGB panel initialized (%dx%d)", LCD_H_RES, LCD_V_RES);
 }
