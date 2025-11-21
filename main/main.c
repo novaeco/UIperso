@@ -64,11 +64,20 @@ void app_main(void)
 
     i2c_scan_bus(ch422g_get_i2c_port());
 
-    if (ch_err == ESP_OK)
+    esp_err_t lcd_err = ch422g_set_lcd_power(true);
+    if (lcd_err != ESP_OK)
     {
-        ESP_ERROR_CHECK(ch422g_set_lcd_power(true));
+        ESP_LOGW(TAG, "Failed to enable LCD power via IO extension (%s)", esp_err_to_name(lcd_err));
+    }
+    else
+    {
         vTaskDelay(pdMS_TO_TICKS(10));
-        ESP_ERROR_CHECK(ch422g_set_backlight(true));
+    }
+
+    esp_err_t bl_err = ch422g_set_backlight(true);
+    if (bl_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to enable backlight via IO extension (%s)", esp_err_to_name(bl_err));
     }
 
     lv_init();

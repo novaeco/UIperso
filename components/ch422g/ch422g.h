@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 /**
- * @brief Initialize the CH422G GPIO expander and the shared I2C bus.
+ * @brief Initialize the CH422G-compatible IO extension and the shared I2C bus.
  */
 esp_err_t ch422g_init(void);
 
@@ -18,6 +18,11 @@ esp_err_t ch422g_init(void);
  * @brief Obtain the I2C port used by the CH422G + GT911 devices.
  */
 i2c_port_t ch422g_get_i2c_port(void);
+
+/**
+ * @brief Determine if the IO extension responded correctly on the I2C bus.
+ */
+bool ch422g_is_available(void);
 
 /**
  * @brief Control LCD backlight (true = ON).
@@ -44,6 +49,11 @@ esp_err_t ch422g_select_usb(bool usb_selected);
  * @brief Drive the µSD card chip-select. When @a asserted is true CS is driven active.
  */
 esp_err_t ch422g_set_sdcard_cs(bool asserted);
+
+/**
+ * @brief Indicate whether the µSD chip-select line is routed to the IO extension.
+ */
+bool ch422g_sdcard_cs_available(void);
 
 #ifdef __cplusplus
 }

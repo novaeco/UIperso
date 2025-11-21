@@ -31,6 +31,23 @@ static const char *TAG = "SDCARD";
 
 static bool s_mounted = false;
 static sdmmc_card_t *s_card = NULL;
+static bool s_use_ioext_cs = false;
+
+static void sdcard_pre_trans_cb(sdspi_dev_handle_t handle, const sdspi_cmd_t *cmd, sdspi_transaction_t *t)
+{
+    (void)handle;
+    (void)cmd;
+    (void)t;
+    ch422g_set_sdcard_cs(true);
+}
+
+static void sdcard_post_trans_cb(sdspi_dev_handle_t handle, const sdspi_cmd_t *cmd, sdspi_transaction_t *t)
+{
+    (void)handle;
+    (void)cmd;
+    (void)t;
+    ch422g_set_sdcard_cs(false);
+}
 
 static esp_err_t sdcard_mount(void)
 {
@@ -73,13 +90,6 @@ static esp_err_t sdcard_mount(void)
         bus_initialized_here = true;
     }
 
-    // S'assure que le CH422G laisse le CS au niveau inactif (haut) si celui-ci pilote réellement la ligne.
-    esp_err_t ch_err = ch422g_set_sdcard_cs(false);
-    if ((ch_err != ESP_OK) && (ch_err != ESP_ERR_INVALID_STATE))
-    {
-        ESP_LOGW(TAG, "Unable to deassert SD CS via CH422G (%s)", esp_err_to_name(ch_err));
-    }
-
     sdmmc_card_t *card = NULL;
 
     const esp_vfs_fat_mount_config_t mount_config = {
@@ -90,7 +100,29 @@ static esp_err_t sdcard_mount(void)
     };
 
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
+    s_use_ioext_cs = ch422g_sdcard_cs_available();
+
+    if (s_use_ioext_cs)
+    {
+        esp_err_t ch_err = ch422g_set_sdcard_cs(false);
+        if (ch_err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "Unable to deassert SD CS via IO extension (%s), falling back to GPIO", esp_err_to_name(ch_err));
+            s_use_ioext_cs = false;
+        }
+    }
+
+    if (s_use_ioext_cs)
+    {
+        slot_config.gpio_cs = -1;
+        slot_config.command_transfer.pre_trans_cb = sdcard_pre_trans_cb;
+        slot_config.command_transfer.post_trans_cb = sdcard_post_trans_cb;
+        ESP_LOGI(TAG, "Using IO extension for SD chip-select");
+    }
+    else
+    {
+        slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
+    }
     slot_config.host_id = host.slot;
 
     err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
