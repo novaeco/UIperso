@@ -3,7 +3,6 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include "ch422g.h"
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -12,7 +11,11 @@
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 
-#define GT911_I2C_ADDRESS              0x5D    // TODO: vérifier l'adresse en fonction du câblage (0x5D/0x14)
+#define GT911_I2C_PORT                 I2C_NUM_0
+#define GT911_I2C_SDA_GPIO             GPIO_NUM_8
+#define GT911_I2C_SCL_GPIO             GPIO_NUM_9
+#define GT911_I2C_SPEED_HZ             400000
+#define GT911_I2C_ADDRESS              0x5D
 #define GT911_I2C_TIMEOUT_MS           50
 
 #define GT911_REG_COMMAND              0x8040
@@ -24,7 +27,8 @@
 #define GT911_POINT_STRUCT_SIZE        8
 #define GT911_MAX_TOUCH_POINTS         5
 
-#define GT911_INT_GPIO                 GPIO_NUM_3   // TODO: confirmer la broche INT réelle du GT911
+#define GT911_INT_GPIO                 GPIO_NUM_4   // IRQ routed directly to ESP32-S3 on Waveshare board
+#define GT911_RST_GPIO                 GPIO_NUM_NC  // RST routed via IO extension (not controlled here)
 
 static const char *TAG = "GT911";
 
@@ -40,11 +44,40 @@ static lv_indev_t *s_indev = NULL;
 static gt911_point_t s_last_point;
 static bool s_initialized = false;
 
+static esp_err_t gt911_bus_init(void)
+{
+    i2c_config_t cfg = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = GT911_I2C_SDA_GPIO,
+        .scl_io_num = GT911_I2C_SCL_GPIO,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = GT911_I2C_SPEED_HZ,
+        .clk_flags = 0,
+    };
+
+    esp_err_t err = i2c_param_config(GT911_I2C_PORT, &cfg);
+    if ((err != ESP_OK) && (err != ESP_ERR_INVALID_STATE))
+    {
+        ESP_LOGE(TAG, "i2c_param_config failed (%s)", esp_err_to_name(err));
+        return err;
+    }
+
+    err = i2c_driver_install(GT911_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    if ((err != ESP_OK) && (err != ESP_ERR_INVALID_STATE))
+    {
+        ESP_LOGE(TAG, "i2c_driver_install failed (%s)", esp_err_to_name(err));
+        return err;
+    }
+
+    return ESP_OK;
+}
+
 static esp_err_t gt911_write_u8(uint16_t reg, uint8_t value)
 {
     uint8_t payload[3] = {reg & 0xFF, (reg >> 8) & 0xFF, value};
     return i2c_master_write_to_device(
-        ch422g_get_i2c_port(),
+        GT911_I2C_PORT,
         GT911_I2C_ADDRESS,
         payload,
         sizeof(payload),
@@ -55,7 +88,7 @@ static esp_err_t gt911_read(uint16_t reg, uint8_t *data, size_t length)
 {
     uint8_t reg_buf[2] = {reg & 0xFF, (reg >> 8) & 0xFF};
     return i2c_master_write_read_device(
-        ch422g_get_i2c_port(),
+        GT911_I2C_PORT,
         GT911_I2C_ADDRESS,
         reg_buf,
         sizeof(reg_buf),
@@ -111,10 +144,24 @@ static bool gt911_read_primary_point(gt911_point_t *point)
 
 static void gt911_hw_reset(void)
 {
-    // Reset is routed through CH422G -> GT911 RST#. Active low assumption.
-    ESP_ERROR_CHECK(ch422g_set_touch_reset(true));
+    if (GT911_RST_GPIO == GPIO_NUM_NC)
+    {
+        ESP_LOGW(TAG, "GT911 reset line not controlled (IO extension not implemented)");
+        return;
+    }
+
+    const gpio_config_t cfg = {
+        .pin_bit_mask = 1ULL << GT911_RST_GPIO,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&cfg));
+
+    gpio_set_level(GT911_RST_GPIO, 0);
     vTaskDelay(pdMS_TO_TICKS(20));
-    ESP_ERROR_CHECK(ch422g_set_touch_reset(false));
+    gpio_set_level(GT911_RST_GPIO, 1);
     vTaskDelay(pdMS_TO_TICKS(60));
 }
 
@@ -188,16 +235,11 @@ void gt911_init(void)
         return;
     }
 
-    const esp_err_t ch422_err = ch422g_init();
-    if (ch422_err != ESP_OK)
+    if (gt911_bus_init() != ESP_OK)
     {
-        ESP_LOGW(TAG, "CH422G init failed (0x%x). Touch driver disabled.", ch422_err);
+        ESP_LOGE(TAG, "Failed to initialize I2C bus for GT911");
         return;
     }
-
-    ESP_ERROR_CHECK(ch422g_set_lcd_power(true));
-    vTaskDelay(pdMS_TO_TICKS(10));
-    ESP_ERROR_CHECK(ch422g_set_backlight(true));
 
     gt911_hw_reset();
     gt911_configure_int_pin();
@@ -210,7 +252,7 @@ void gt911_init(void)
     if (s_indev == NULL)
     {
         ESP_LOGE(TAG, "Failed to register LVGL input device");
-        abort();
+        return;
     }
 
     s_initialized = true;
