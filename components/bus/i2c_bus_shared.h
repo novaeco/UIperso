@@ -25,6 +25,11 @@ i2c_master_bus_handle_t i2c_bus_shared_handle(void);
 int i2c_bus_shared_timeout_ms(void);
 
 /**
+ * @brief Default SCL speed (Hz) used for onboard devices.
+ */
+uint32_t i2c_bus_shared_default_speed_hz(void);
+
+/**
  * @brief Attach an I2C device to the shared bus with the given address/speed.
  */
 esp_err_t i2c_bus_shared_add_device(uint16_t address,

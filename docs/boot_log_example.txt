@@ -1,0 +1,14 @@
+I (0) boot: ESP32-S3 UI phase 4 starting
+I (0) i2c_bus_shared: Shared I2C initialized on port 0 (SDA=8 SCL=9 100000 Hz)
+I (0) CH422G: IO extension ready on addr 0x24
+I (0) MAIN: I2C scan on shared bus
+I (0) MAIN:   - Device found at 0x24
+I (0) MAIN:   - Device found at 0x5D
+I (0) MAIN: EXIO6 (LCD_VDD_EN) asserted; waiting 20 ms before DISP/backlight
+I (0) MAIN: EXIO2 (DISP/backlight) asserted after power stabilization
+I (0) RGB_LCD: RGB panel initialized (1024x600)
+I (0) GT911: GT911 ID=911 vendor=0x01
+I (0) GT911: GT911 config read: version=115, panel 1024x600
+I (0) GT911: GT911 config written: 1024x600, report 60 Hz (swap=0 flipX=0 flipY=0)
+I (0) GT911: GT911 ready: 1024x600, report 60 Hz
+I (0) GT911: GT911 touch initialized

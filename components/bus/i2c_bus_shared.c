@@ -54,6 +54,11 @@ int i2c_bus_shared_timeout_ms(void)
     return SHARED_I2C_TIMEOUT_MS;
 }
 
+uint32_t i2c_bus_shared_default_speed_hz(void)
+{
+    return SHARED_I2C_FREQ_HZ;
+}
+
 esp_err_t i2c_bus_shared_add_device(uint16_t address,
                                     uint32_t scl_speed_hz,
                                     i2c_master_dev_handle_t *ret_handle)

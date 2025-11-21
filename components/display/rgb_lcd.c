@@ -21,20 +21,34 @@
 #define LCD_VSYNC_BACK_PORCH       23
 #define LCD_VSYNC_FRONT_PORCH      12
 
-#define LCD_PIN_NUM_DE             GPIO_NUM_40
-#define LCD_PIN_NUM_PCLK           GPIO_NUM_42
-#define LCD_PIN_NUM_HSYNC          GPIO_NUM_39
-#define LCD_PIN_NUM_VSYNC          GPIO_NUM_41
-#define LCD_PIN_NUM_BACKLIGHT      GPIO_NUM_38
+#define LCD_PIN_NUM_DE             GPIO_NUM_5
+#define LCD_PIN_NUM_PCLK           GPIO_NUM_7
+#define LCD_PIN_NUM_HSYNC          GPIO_NUM_46
+#define LCD_PIN_NUM_VSYNC          GPIO_NUM_3
+#define LCD_PIN_NUM_BACKLIGHT      GPIO_NUM_NC
 
 #define LCD_DATA_WIDTH             16
 #define LVGL_DRAW_BUF_LINES        100
 
+// Mapping based on the Waveshare ESP32-S3 Touch LCD 7B reference design:
+// D0..D15 => B3, B4, B5, B6, B7, G2, G3, G4, G5, G6, G7, R3, R4, R5, R6, R7
 static const gpio_num_t s_data_gpio[LCD_DATA_WIDTH] = {
-    GPIO_NUM_4,  GPIO_NUM_5,  GPIO_NUM_6,  GPIO_NUM_7,
-    GPIO_NUM_8,  GPIO_NUM_9,  GPIO_NUM_10, GPIO_NUM_11,
-    GPIO_NUM_12, GPIO_NUM_13, GPIO_NUM_14, GPIO_NUM_15,
-    GPIO_NUM_16, GPIO_NUM_17, GPIO_NUM_18, GPIO_NUM_19,
+    GPIO_NUM_14, // B3
+    GPIO_NUM_38, // B4
+    GPIO_NUM_18, // B5
+    GPIO_NUM_17, // B6
+    GPIO_NUM_10, // B7
+    GPIO_NUM_39, // G2
+    GPIO_NUM_0,  // G3
+    GPIO_NUM_45, // G4
+    GPIO_NUM_48, // G5
+    GPIO_NUM_47, // G6
+    GPIO_NUM_21, // G7
+    GPIO_NUM_1,  // R3
+    GPIO_NUM_2,  // R4
+    GPIO_NUM_42, // R5
+    GPIO_NUM_41, // R6
+    GPIO_NUM_40, // R7
 };
 
 static const char *TAG = "RGB_LCD";
@@ -63,20 +77,7 @@ static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 
 static void rgb_lcd_init_backlight(void)
 {
-    if (LCD_PIN_NUM_BACKLIGHT == GPIO_NUM_NC)
-    {
-        return;
-    }
-
-    const gpio_config_t cfg = {
-        .pin_bit_mask = 1ULL << LCD_PIN_NUM_BACKLIGHT,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    ESP_ERROR_CHECK(gpio_config(&cfg));
-    gpio_set_level(LCD_PIN_NUM_BACKLIGHT, 1);
+    // Backlight is driven via the CH422G IO expander (EXIO2). Nothing to do here.
 }
 
 void rgb_lcd_init(void)
@@ -141,6 +142,7 @@ void rgb_lcd_init(void)
     ESP_ERROR_CHECK(esp_lcd_new_rgb_panel(&panel_config, &s_panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel_handle));
+
     rgb_lcd_init_backlight();
 
     s_disp = lv_display_create(LCD_H_RES, LCD_V_RES);

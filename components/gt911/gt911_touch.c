@@ -18,8 +18,6 @@
 #define GT911_I2C_TIMEOUT_MS           i2c_bus_shared_timeout_ms()
 #define GT911_I2C_RETRIES              3
 #define GT911_I2C_RETRY_DELAY_MS       3
-#define GT911_I2C_SPEED_HZ             100000
-
 #define GT911_REG_COMMAND              0x8040
 #define GT911_REG_CONFIG               0x8047
 #define GT911_REG_CONFIG_CHECKSUM      0x80FF
@@ -63,6 +61,18 @@ static lv_indev_t *s_indev = NULL;
 static gt911_point_t s_last_point;
 static bool s_initialized = false;
 static i2c_master_dev_handle_t s_dev = NULL;
+
+static void gt911_disable(const char *reason, esp_err_t err)
+{
+    if (reason == NULL)
+    {
+        reason = "unspecified";
+    }
+
+    ESP_LOGE(TAG, "GT911 disabled after %s (%s); touch will be unavailable", reason, esp_err_to_name(err));
+    s_dev = NULL;
+    s_initialized = false;
+}
 
 static esp_err_t gt911_retry_write_to_device(const uint8_t *payload, size_t length)
 {
@@ -130,7 +140,8 @@ static esp_err_t gt911_bus_init(void)
 
     if (s_dev == NULL)
     {
-        ESP_RETURN_ON_ERROR(i2c_bus_shared_add_device(GT911_I2C_ADDRESS, GT911_I2C_SPEED_HZ, &s_dev), TAG, "Failed to add GT911 to shared bus");
+        const uint32_t scl_speed = i2c_bus_shared_default_speed_hz();
+        ESP_RETURN_ON_ERROR(i2c_bus_shared_add_device(GT911_I2C_ADDRESS, scl_speed, &s_dev), TAG, "Failed to add GT911 to shared bus");
     }
 
     if (!ch422g_is_available())
@@ -455,23 +466,17 @@ void gt911_init(void)
     const bool identity_ok = gt911_log_identity();
     if (!identity_ok)
     {
-        ESP_LOGE(TAG, "GT911 disabled after ID read failures; touch will be unavailable");
+        gt911_disable("ID read failures", ESP_ERR_INVALID_RESPONSE);
         return;
     }
 
     if (gt911_update_config() != ESP_OK)
     {
-        ESP_LOGW(TAG, "GT911 configuration update failed; continuing with defaults (%ux%u swap=%d flipX=%d flipY=%d)",
-                 GT911_RESOLUTION_X,
-                 GT911_RESOLUTION_Y,
-                 GT911_SWAP_AXES,
-                 GT911_INVERT_X,
-                 GT911_INVERT_Y);
+        gt911_disable("configuration update failure", ESP_ERR_INVALID_RESPONSE);
+        return;
     }
-    else
-    {
-        ESP_LOGI(TAG, "GT911 ready: %ux%u, report %u Hz", GT911_RESOLUTION_X, GT911_RESOLUTION_Y, GT911_REPORT_RATE_HZ);
-    }
+
+    ESP_LOGI(TAG, "GT911 ready: %ux%u, report %u Hz", GT911_RESOLUTION_X, GT911_RESOLUTION_Y, GT911_REPORT_RATE_HZ);
 
     s_indev = lv_indev_create();
     lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
