@@ -1,6 +1,7 @@
 #include "logs_panel.h"
 
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -11,6 +12,16 @@
 
 static lv_obj_t *log_text_area = NULL;
 static char log_buffer[LOG_PANEL_BUFFER_SIZE];
+static bool log_buffer_initialized = false;
+
+static void ensure_log_buffer_initialized(void)
+{
+    if (!log_buffer_initialized)
+    {
+        log_buffer[0] = '\0';
+        log_buffer_initialized = true;
+    }
+}
 
 static void trim_buffer_if_needed(size_t additional)
 {
@@ -37,6 +48,8 @@ static void trim_buffer_if_needed(size_t additional)
 
 lv_obj_t *logs_panel_create(void)
 {
+    ensure_log_buffer_initialized();
+
     lv_obj_t *screen = lv_obj_create(NULL);
     lv_obj_remove_style_all(screen);
     lv_obj_add_style(screen, lv_theme_custom_style_screen(), LV_PART_MAIN);
@@ -54,9 +67,17 @@ lv_obj_t *logs_panel_create(void)
     lv_obj_set_size(log_text_area, lv_pct(100), lv_pct(80));
     lv_obj_add_style(log_text_area, lv_theme_custom_style_card(), LV_PART_MAIN);
     lv_obj_set_style_bg_color(log_text_area, lv_color_hex(0x0F131A), LV_PART_MAIN);
-    lv_textarea_set_text(log_text_area, "Console prête\n");
-    strncpy(log_buffer, "Console prête\n", sizeof(log_buffer));
+    if (log_buffer[0] == '\0')
+    {
+        snprintf(log_buffer, sizeof(log_buffer), "%s", "Console prête\n");
+    }
+    else
+    {
+        trim_buffer_if_needed(strlen("Console prête\n"));
+        strncat(log_buffer, "Console prête\n", sizeof(log_buffer) - strlen(log_buffer) - 1);
+    }
     log_buffer[sizeof(log_buffer) - 1] = '\0';
+    lv_textarea_set_text(log_text_area, log_buffer);
     lv_textarea_set_max_length(log_text_area, LOG_PANEL_BUFFER_SIZE - 1);
     lv_textarea_set_cursor_click_pos(log_text_area, false);
     lv_textarea_set_password_mode(log_text_area, false);
@@ -67,6 +88,8 @@ lv_obj_t *logs_panel_create(void)
 
 void logs_panel_add_log(const char *fmt, ...)
 {
+    ensure_log_buffer_initialized();
+
     if (!fmt)
     {
         return;

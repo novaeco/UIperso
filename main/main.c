@@ -19,15 +19,60 @@
 #include "cs8501.h"
 #include "rs485_driver.h"
 #include "ui_manager.h"
+#include "logs_panel.h"
 
 static const char *TAG = "MAIN";
 
 // Power-on sequencing derived from ST7262 / Waveshare timing (VDD -> DISP/backlight)
 #define LCD_POWER_STABILIZE_DELAY_MS   20
 
+static const char *reset_reason_to_str(esp_reset_reason_t reason)
+{
+    switch (reason)
+    {
+    case ESP_RST_POWERON:
+        return "power-on";
+    case ESP_RST_EXT:
+        return "external";
+    case ESP_RST_SW:
+        return "software";
+    case ESP_RST_PANIC:
+        return "panic";
+    case ESP_RST_INT_WDT:
+        return "interrupt WDT";
+    case ESP_RST_TASK_WDT:
+        return "task WDT";
+    case ESP_RST_WDT:
+        return "other WDT";
+    case ESP_RST_DEEPSLEEP:
+        return "deep sleep";
+    case ESP_RST_BROWNOUT:
+        return "brownout";
+    case ESP_RST_SDIO:
+        return "SDIO";
+    default:
+        return "unknown";
+    }
+}
+
+static void log_reset_diagnostics(void)
+{
+    const esp_reset_reason_t reason = esp_reset_reason();
+    ESP_LOGI(TAG, "Reset reason: %s (%d)", reset_reason_to_str(reason), reason);
+    logs_panel_add_log("Reset: %s (%d)", reset_reason_to_str(reason), reason);
+
+    if (reason == ESP_RST_INT_WDT || reason == ESP_RST_TASK_WDT || reason == ESP_RST_WDT)
+    {
+        ESP_LOGW(TAG, "Last reset was triggered by a watchdog (reason=%d). Review long-running tasks and IRQ load.", reason);
+        logs_panel_add_log("WDT reset détecté : examiner les tâches longues et IRQ");
+    }
+}
+
 static void i2c_scan_bus(i2c_port_t port)
 {
     ESP_LOGI(TAG, "I2C scan on port %d", port);
+    logs_panel_add_log("Scan I2C sur port %d", port);
+    int devices = 0;
     for (uint8_t addr = 1; addr < 0x7F; ++addr)
     {
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -40,7 +85,14 @@ static void i2c_scan_bus(i2c_port_t port)
         if (err == ESP_OK)
         {
             ESP_LOGI(TAG, "  - Device found at 0x%02X", addr);
+            logs_panel_add_log("I2C: périphérique détecté @0x%02X", addr);
+            devices++;
         }
+    }
+
+    if (devices == 0)
+    {
+        logs_panel_add_log("I2C: aucun périphérique détecté");
     }
 }
 
@@ -54,6 +106,7 @@ void app_main(void)
 {
     esp_log_level_set("*", ESP_LOG_INFO);
     ESP_LOGI(TAG, "ESP32-S3 UI phase 4 starting");
+    log_reset_diagnostics();
 
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
@@ -73,10 +126,12 @@ void app_main(void)
         if (lcd_err != ESP_OK)
         {
             ESP_LOGW(TAG, "EXIO6 (LCD_VDD_EN) enable failed (%s); continuing degraded", esp_err_to_name(lcd_err));
+            logs_panel_add_log("LCD_VDD_EN: échec (%s)", esp_err_to_name(lcd_err));
         }
         else
         {
             ESP_LOGI(TAG, "EXIO6 (LCD_VDD_EN) asserted; waiting %d ms before DISP/backlight", LCD_POWER_STABILIZE_DELAY_MS);
+            logs_panel_add_log("LCD_VDD_EN activé, délai %d ms", LCD_POWER_STABILIZE_DELAY_MS);
             vTaskDelay(pdMS_TO_TICKS(LCD_POWER_STABILIZE_DELAY_MS));
         }
 
@@ -84,19 +139,23 @@ void app_main(void)
         if (bl_err != ESP_OK)
         {
             ESP_LOGW(TAG, "EXIO2 (DISP/backlight) enable failed (%s); UI will start without panel", esp_err_to_name(bl_err));
+            logs_panel_add_log("Backlight: échec (%s)", esp_err_to_name(bl_err));
         }
         else
         {
             ESP_LOGI(TAG, "EXIO2 (DISP/backlight) asserted after power stabilization");
+            logs_panel_add_log("Backlight activé après stabilisation");
         }
     }
     else
     {
         ESP_LOGW(TAG, "IO extension unavailable; skipping LCD_VDD_EN / DISP sequencing (UI will start degraded)");
+        logs_panel_add_log("Extenseur IO indisponible : séquence LCD sautée");
     }
 
     lv_init();
     rgb_lcd_init();
+    logs_panel_add_log("Init GT911 en cours");
     gt911_init();
 
     esp_err_t can_err = can_bus_init();
