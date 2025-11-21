@@ -62,6 +62,8 @@ static lv_indev_t *s_indev = NULL;
 static gt911_point_t s_last_point;
 static bool s_initialized = false;
 
+static inline i2c_port_t gt911_i2c_port(void);
+
 static esp_err_t gt911_retry_write_to_device(const uint8_t *payload, size_t length)
 {
     esp_err_t err = ESP_FAIL;
