@@ -22,6 +22,9 @@
 
 static const char *TAG = "MAIN";
 
+// Power-on sequencing derived from ST7262 / Waveshare timing (VDD -> DISP/backlight)
+#define LCD_POWER_STABILIZE_DELAY_MS   20
+
 static void i2c_scan_bus(i2c_port_t port)
 {
     ESP_LOGI(TAG, "I2C scan on port %d", port);
@@ -64,20 +67,32 @@ void app_main(void)
 
     i2c_scan_bus(ch422g_get_i2c_port());
 
-    esp_err_t lcd_err = ch422g_set_lcd_power(true);
-    if (lcd_err != ESP_OK)
+    if (ch422g_is_available())
     {
-        ESP_LOGW(TAG, "Failed to enable LCD power via IO extension (%s)", esp_err_to_name(lcd_err));
+        esp_err_t lcd_err = ch422g_set_lcd_power(true);
+        if (lcd_err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "EXIO6 (LCD_VDD_EN) enable failed (%s); continuing degraded", esp_err_to_name(lcd_err));
+        }
+        else
+        {
+            ESP_LOGI(TAG, "EXIO6 (LCD_VDD_EN) asserted; waiting %d ms before DISP/backlight", LCD_POWER_STABILIZE_DELAY_MS);
+            vTaskDelay(pdMS_TO_TICKS(LCD_POWER_STABILIZE_DELAY_MS));
+        }
+
+        esp_err_t bl_err = ch422g_set_backlight(true);
+        if (bl_err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "EXIO2 (DISP/backlight) enable failed (%s); UI will start without panel", esp_err_to_name(bl_err));
+        }
+        else
+        {
+            ESP_LOGI(TAG, "EXIO2 (DISP/backlight) asserted after power stabilization");
+        }
     }
     else
     {
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-
-    esp_err_t bl_err = ch422g_set_backlight(true);
-    if (bl_err != ESP_OK)
-    {
-        ESP_LOGW(TAG, "Failed to enable backlight via IO extension (%s)", esp_err_to_name(bl_err));
+        ESP_LOGW(TAG, "IO extension unavailable; skipping LCD_VDD_EN / DISP sequencing (UI will start degraded)");
     }
 
     lv_init();
