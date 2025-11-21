@@ -273,7 +273,11 @@ static void gt911_configure_int_pin(void)
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
-    ESP_ERROR_CHECK(gpio_config(&cfg));
+    const esp_err_t err = gpio_config(&cfg);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to configure GT911 INT pin (%s) -- continuing without IRQ bias", esp_err_to_name(err));
+    }
 }
 
 static bool gt911_poll(gt911_point_t *point)
@@ -478,15 +482,23 @@ void gt911_init(void)
 
     ESP_LOGI(TAG, "GT911 ready: %ux%u, report %u Hz", GT911_RESOLUTION_X, GT911_RESOLUTION_Y, GT911_REPORT_RATE_HZ);
 
-    s_indev = lv_indev_create();
-    lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_read_cb(s_indev, gt911_lvgl_read);
-    lv_indev_set_display(s_indev, lv_display_get_default());
-    if (s_indev == NULL)
+    lv_display_t *disp = lv_display_get_default();
+    if (disp == NULL)
     {
-        ESP_LOGE(TAG, "Failed to register LVGL input device");
+        ESP_LOGE(TAG, "No default LVGL display; skipping GT911 input device registration");
         return;
     }
+
+    s_indev = lv_indev_create();
+    if (s_indev == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create LVGL input device");
+        return;
+    }
+
+    lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(s_indev, gt911_lvgl_read);
+    lv_indev_set_display(s_indev, disp);
 
     s_initialized = true;
     ESP_LOGI(TAG, "GT911 touch initialized");

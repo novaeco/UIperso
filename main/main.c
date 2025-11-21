@@ -196,8 +196,19 @@ void app_main(void)
         .name = "lv_tick",
     };
     esp_timer_handle_t tick_timer = NULL;
-    ESP_ERROR_CHECK(esp_timer_create(&tick_timer_args, &tick_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, 1000));
+    esp_err_t timer_err = esp_timer_create(&tick_timer_args, &tick_timer);
+    if (timer_err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to create LVGL tick timer (%s)", esp_err_to_name(timer_err));
+    }
+    else
+    {
+        timer_err = esp_timer_start_periodic(tick_timer, 1000);
+        if (timer_err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Failed to start LVGL tick timer (%s)", esp_err_to_name(timer_err));
+        }
+    }
 
     ui_manager_init();
 
