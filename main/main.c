@@ -31,6 +31,12 @@ static const char *TAG = "MAIN";
 #if defined(CONFIG_LV_TICK_CUSTOM)
 _Static_assert(CONFIG_LV_TICK_CUSTOM == 0, "CONFIG_LV_TICK_CUSTOM must remain disabled when using esp_timer-driven lv_tick_inc()");
 #elif defined(LV_TICK_CUSTOM)
+#if defined(LV_USE_CUSTOM_TICK)
+_Static_assert(LV_USE_CUSTOM_TICK == 0, "LV_USE_CUSTOM_TICK must remain disabled when using esp_timer-driven lv_tick_inc()");
+#elif defined(CONFIG_LV_USE_CUSTOM_TICK)
+_Static_assert(CONFIG_LV_USE_CUSTOM_TICK == 0, "CONFIG_LV_USE_CUSTOM_TICK must remain disabled when using esp_timer-driven lv_tick_inc()");
+#elif defined(LV_TICK_CUSTOM)
+// Legacy name kept for forward compatibility with LVGL 8 ports.
 _Static_assert(LV_TICK_CUSTOM == 0, "LV_TICK_CUSTOM must remain disabled when using esp_timer-driven lv_tick_inc()");
 #endif
 
