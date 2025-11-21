@@ -135,13 +135,13 @@ static esp_err_t gt911_bus_init(void)
 
 static esp_err_t gt911_write_u8(uint16_t reg, uint8_t value)
 {
-    uint8_t payload[3] = {reg & 0xFF, (reg >> 8) & 0xFF, value};
+    uint8_t payload[3] = {(uint8_t)((reg >> 8) & 0xFF), (uint8_t)(reg & 0xFF), value};
     return gt911_retry_write_to_device(payload, sizeof(payload));
 }
 
 static esp_err_t gt911_write(uint16_t reg, const uint8_t *data, size_t length)
 {
-    uint8_t header[2] = {reg & 0xFF, (reg >> 8) & 0xFF};
+    uint8_t header[2] = {(uint8_t)((reg >> 8) & 0xFF), (uint8_t)(reg & 0xFF)};
     const size_t payload_len = length + sizeof(header);
     uint8_t *payload = heap_caps_malloc(payload_len, MALLOC_CAP_INTERNAL);
     if (payload == NULL)
@@ -160,7 +160,7 @@ static esp_err_t gt911_write(uint16_t reg, const uint8_t *data, size_t length)
 
 static esp_err_t gt911_read(uint16_t reg, uint8_t *data, size_t length)
 {
-    uint8_t reg_buf[2] = {reg & 0xFF, (reg >> 8) & 0xFF};
+    uint8_t reg_buf[2] = {(uint8_t)((reg >> 8) & 0xFF), (uint8_t)(reg & 0xFF)};
     return gt911_retry_write_read(reg_buf, sizeof(reg_buf), data, length);
 }
 
@@ -263,7 +263,7 @@ static bool gt911_poll(gt911_point_t *point)
     return gt911_read_primary_point(point);
 }
 
-static void gt911_log_identity(void)
+static bool gt911_log_identity(void)
 {
     uint8_t product_id[4] = {0};
     uint8_t vendor = 0;
@@ -291,11 +291,14 @@ static void gt911_log_identity(void)
         char id_str[5] = {0};
         memcpy(id_str, product_id, sizeof(product_id));
         ESP_LOGI(TAG, "GT911 ID=%s vendor=0x%02X", id_str, vendor);
+        return true;
     }
     else
     {
         ESP_LOGW(TAG, "Unable to read GT911 product ID after %d attempts", GT911_I2C_RETRIES);
     }
+
+    return false;
 }
 
 static void gt911_lvgl_read(lv_indev_t *indev, lv_indev_data_t *data)
@@ -363,6 +366,11 @@ static esp_err_t gt911_update_config(void)
         ESP_LOGE(TAG, "Failed to read GT911 config: %s", esp_err_to_name(err));
         return err;
     }
+
+    const uint8_t config_version = config[0];
+    const uint16_t panel_x = ((uint16_t)config[2] << 8) | config[1];
+    const uint16_t panel_y = ((uint16_t)config[4] << 8) | config[3];
+    ESP_LOGI(TAG, "GT911 config read: version=%u, panel %ux%u", config_version, panel_x, panel_y);
 
     config[1] = (uint8_t)(GT911_RESOLUTION_X & 0xFF);
     config[2] = (uint8_t)((GT911_RESOLUTION_X >> 8) & 0xFF);
@@ -436,7 +444,12 @@ void gt911_init(void)
 
     vTaskDelay(pdMS_TO_TICKS(10));
     gt911_configure_int_pin();
-    gt911_log_identity();
+    const bool identity_ok = gt911_log_identity();
+    if (!identity_ok)
+    {
+        ESP_LOGE(TAG, "GT911 disabled after ID read failures; touch will be unavailable");
+        return;
+    }
 
     if (gt911_update_config() != ESP_OK)
     {
@@ -446,6 +459,10 @@ void gt911_init(void)
                  GT911_SWAP_AXES,
                  GT911_INVERT_X,
                  GT911_INVERT_Y);
+    }
+    else
+    {
+        ESP_LOGI(TAG, "GT911 ready: %ux%u, report %u Hz", GT911_RESOLUTION_X, GT911_RESOLUTION_Y, GT911_REPORT_RATE_HZ);
     }
 
     s_indev = lv_indev_create();
