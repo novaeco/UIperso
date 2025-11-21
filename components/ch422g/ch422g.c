@@ -98,6 +98,10 @@ esp_err_t ch422g_init(void)
     ESP_RETURN_ON_ERROR(i2c_bus_shared_add_device(IOEXT_I2C_ADDRESS, i2c_bus_shared_default_speed_hz(), &s_ctx.dev), TAG, "Failed to add CH422G to shared bus");
     s_ctx.io_ready = true;
 
+    // The CH32V003 acting as IO expander may still be booting when the bus is ready.
+    // Give it a few milliseconds before the first transaction to avoid transient NACKs.
+    vTaskDelay(pdMS_TO_TICKS(5));
+
     // Initialize outputs to a safe default (all released/disabled)
     s_ctx.outputs = 0;
     esp_err_t err = ch422g_write_outputs();

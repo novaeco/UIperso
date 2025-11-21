@@ -62,6 +62,18 @@ static gt911_point_t s_last_point;
 static bool s_initialized = false;
 static i2c_master_dev_handle_t s_dev = NULL;
 
+static void gt911_disable(const char *reason, esp_err_t err)
+{
+    if (reason == NULL)
+    {
+        reason = "unspecified";
+    }
+
+    ESP_LOGE(TAG, "GT911 disabled after %s (%s); touch will be unavailable", reason, esp_err_to_name(err));
+    s_dev = NULL;
+    s_initialized = false;
+}
+
 static esp_err_t gt911_retry_write_to_device(const uint8_t *payload, size_t length)
 {
     if (s_dev == NULL)
@@ -454,23 +466,17 @@ void gt911_init(void)
     const bool identity_ok = gt911_log_identity();
     if (!identity_ok)
     {
-        ESP_LOGE(TAG, "GT911 disabled after ID read failures; touch will be unavailable");
+        gt911_disable("ID read failures", ESP_ERR_INVALID_RESPONSE);
         return;
     }
 
     if (gt911_update_config() != ESP_OK)
     {
-        ESP_LOGW(TAG, "GT911 configuration update failed; continuing with defaults (%ux%u swap=%d flipX=%d flipY=%d)",
-                 GT911_RESOLUTION_X,
-                 GT911_RESOLUTION_Y,
-                 GT911_SWAP_AXES,
-                 GT911_INVERT_X,
-                 GT911_INVERT_Y);
+        gt911_disable("configuration update failure", ESP_ERR_INVALID_RESPONSE);
+        return;
     }
-    else
-    {
-        ESP_LOGI(TAG, "GT911 ready: %ux%u, report %u Hz", GT911_RESOLUTION_X, GT911_RESOLUTION_Y, GT911_REPORT_RATE_HZ);
-    }
+
+    ESP_LOGI(TAG, "GT911 ready: %ux%u, report %u Hz", GT911_RESOLUTION_X, GT911_RESOLUTION_Y, GT911_REPORT_RATE_HZ);
 
     s_indev = lv_indev_create();
     lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
