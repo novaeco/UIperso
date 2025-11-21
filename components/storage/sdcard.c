@@ -33,24 +33,6 @@ static bool s_mounted = false;
 static sdmmc_card_t *s_card = NULL;
 static bool s_use_ioext_cs = false;
 
-static void sdcard_pre_trans_cb(sdspi_dev_handle_t handle, const sdspi_cmd_t *cmd, sdspi_transaction_t *t)
-{
-    (void)handle;
-    (void)cmd;
-    (void)t;
-    // SD_CS is routed through EXIO4 on the CH422G per Waveshare schematic.
-    // Assert the CS line via the IO extension just before each SDSPI segment.
-    ch422g_set_sdcard_cs(true);
-}
-
-static void sdcard_post_trans_cb(sdspi_dev_handle_t handle, const sdspi_cmd_t *cmd, sdspi_transaction_t *t)
-{
-    (void)handle;
-    (void)cmd;
-    (void)t;
-    ch422g_set_sdcard_cs(false);
-}
-
 static esp_err_t sdcard_mount(void)
 {
     if (s_mounted)
@@ -114,19 +96,17 @@ static esp_err_t sdcard_mount(void)
         }
     }
 
+    // Legacy SDSPI command/data callbacks have been removed from ESP-IDF 6.1.
+    // Without those hooks we cannot safely bit-bang the CS line via the CH422G
+    // IO expander, so we fall back to driving CS directly from a GPIO pin.
+    // Keeping the detection logic allows future re-enabling should ESP-IDF
+    // expose an equivalent hook again.
     if (s_use_ioext_cs)
     {
-        slot_config.gpio_cs = -1;
-        slot_config.command_transfer.pre_trans_cb = sdcard_pre_trans_cb;
-        slot_config.command_transfer.post_trans_cb = sdcard_post_trans_cb;
-        slot_config.data_transfer.pre_trans_cb = sdcard_pre_trans_cb;
-        slot_config.data_transfer.post_trans_cb = sdcard_post_trans_cb;
-        ESP_LOGI(TAG, "Using IO extension for SD chip-select via EXIO4");
+        ESP_LOGW(TAG, "SDSPI callbacks no longer available in ESP-IDF 6.1; using GPIO CS instead");
     }
-    else
-    {
-        slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
-    }
+
+    slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
     slot_config.host_id = host.slot;
 
     err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
