@@ -1,7 +1,5 @@
 #include "i2c_bus_shared.h"
 
-#include "driver/gpio.h"
-#include "driver/i2c.h"
 #include "esp_check.h"
 #include "esp_log.h"
 
@@ -12,40 +10,31 @@
 #define SHARED_I2C_TIMEOUT_MS   50
 
 static const char *TAG = "i2c_bus_shared";
-static bool s_initialized = false;
+static i2c_master_bus_handle_t s_bus = NULL;
 
 esp_err_t i2c_bus_shared_init(void)
 {
-    if (s_initialized)
+    if (s_bus != NULL)
     {
         return ESP_OK;
     }
 
-    const i2c_config_t cfg = {
-        .mode = I2C_MODE_MASTER,
+    const i2c_master_bus_config_t bus_cfg = {
+        .i2c_port = SHARED_I2C_PORT,
         .sda_io_num = SHARED_I2C_SDA_GPIO,
         .scl_io_num = SHARED_I2C_SCL_GPIO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = SHARED_I2C_FREQ_HZ,
-        .clk_flags = 0,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .intr_priority = 0,
+        .trans_queue_depth = 0,
+        .flags = {
+            .enable_internal_pullup = 1,
+            .allow_pd = 0,
+        },
     };
 
-    esp_err_t err = i2c_param_config(SHARED_I2C_PORT, &cfg);
-    if ((err != ESP_OK) && (err != ESP_ERR_INVALID_STATE))
-    {
-        ESP_LOGE(TAG, "i2c_param_config failed (%s)", esp_err_to_name(err));
-        return err;
-    }
+    ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_cfg, &s_bus), TAG, "i2c_new_master_bus failed");
 
-    err = i2c_driver_install(SHARED_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
-    if ((err != ESP_OK) && (err != ESP_ERR_INVALID_STATE))
-    {
-        ESP_LOGE(TAG, "i2c_driver_install failed (%s)", esp_err_to_name(err));
-        return err;
-    }
-
-    s_initialized = true;
     ESP_LOGI(TAG, "Shared I2C initialized on port %d (SDA=%d SCL=%d %u Hz)",
              SHARED_I2C_PORT,
              SHARED_I2C_SDA_GPIO,
@@ -55,13 +44,39 @@ esp_err_t i2c_bus_shared_init(void)
     return ESP_OK;
 }
 
-i2c_port_t i2c_bus_shared_port(void)
+i2c_master_bus_handle_t i2c_bus_shared_handle(void)
 {
-    return SHARED_I2C_PORT;
+    return s_bus;
 }
 
-TickType_t i2c_bus_shared_timeout_ticks(void)
+int i2c_bus_shared_timeout_ms(void)
 {
-    return pdMS_TO_TICKS(SHARED_I2C_TIMEOUT_MS);
+    return SHARED_I2C_TIMEOUT_MS;
+}
+
+esp_err_t i2c_bus_shared_add_device(uint16_t address,
+                                    uint32_t scl_speed_hz,
+                                    i2c_master_dev_handle_t *ret_handle)
+{
+    if (s_bus == NULL)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (ret_handle == NULL)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = address,
+        .scl_speed_hz = scl_speed_hz,
+        .scl_wait_us = 0,
+        .flags = {
+            .disable_ack_check = 0,
+        },
+    };
+
+    return i2c_master_bus_add_device(s_bus, &dev_cfg, ret_handle);
 }
 

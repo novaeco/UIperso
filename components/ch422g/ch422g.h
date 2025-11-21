@@ -2,7 +2,6 @@
 
 #include <stdbool.h>
 
-#include "driver/i2c.h"
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -13,11 +12,6 @@ extern "C" {
  * @brief Initialize the CH422G-compatible IO extension and the shared I2C bus.
  */
 esp_err_t ch422g_init(void);
-
-/**
- * @brief Obtain the I2C port used by the CH422G + GT911 devices.
- */
-i2c_port_t ch422g_get_i2c_port(void);
 
 /**
  * @brief Determine if the IO extension responded correctly on the I2C bus.

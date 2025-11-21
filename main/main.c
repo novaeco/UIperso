@@ -8,10 +8,11 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "lvgl.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 
 #include "ch422g.h"
 #include "gt911_touch.h"
+#include "i2c_bus_shared.h"
 #include "rgb_lcd.h"
 #include "sdcard.h"
 
@@ -68,19 +69,20 @@ static void log_reset_diagnostics(void)
     }
 }
 
-static void i2c_scan_bus(i2c_port_t port)
+static void i2c_scan_bus(i2c_master_bus_handle_t bus)
 {
-    ESP_LOGI(TAG, "I2C scan on port %d", port);
-    logs_panel_add_log("Scan I2C sur port %d", port);
+    if (bus == NULL)
+    {
+        ESP_LOGW(TAG, "I2C scan skipped: bus not initialized");
+        return;
+    }
+
+    ESP_LOGI(TAG, "I2C scan on shared bus");
+    logs_panel_add_log("Scan I2C sur bus partagé");
     int devices = 0;
     for (uint8_t addr = 1; addr < 0x7F; ++addr)
     {
-        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-        i2c_master_start(cmd);
-        i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
-        i2c_master_stop(cmd);
-        const esp_err_t err = i2c_master_cmd_begin(port, cmd, pdMS_TO_TICKS(20));
-        i2c_cmd_link_delete(cmd);
+        const esp_err_t err = i2c_master_probe(bus, addr, i2c_bus_shared_timeout_ms());
 
         if (err == ESP_OK)
         {
@@ -118,7 +120,7 @@ void app_main(void)
         ESP_LOGW(TAG, "CH422G init failed (0x%x). Running without IO expander features.", ch_err);
     }
 
-    i2c_scan_bus(ch422g_get_i2c_port());
+    i2c_scan_bus(i2c_bus_shared_handle());
 
     if (ch422g_is_available())
     {

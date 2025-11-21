@@ -1,8 +1,7 @@
 #pragma once
 
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "esp_err.h"
-#include "freertos/FreeRTOS.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,14 +15,21 @@ extern "C" {
 esp_err_t i2c_bus_shared_init(void);
 
 /**
- * @brief Get the shared I2C port number (I2C_NUM_0).
+ * @brief Get the handle to the shared master bus.
  */
-i2c_port_t i2c_bus_shared_port(void);
+i2c_master_bus_handle_t i2c_bus_shared_handle(void);
 
 /**
- * @brief Default transaction timeout in RTOS ticks for the shared bus.
+ * @brief Default transaction timeout in milliseconds for the shared bus.
  */
-TickType_t i2c_bus_shared_timeout_ticks(void);
+int i2c_bus_shared_timeout_ms(void);
+
+/**
+ * @brief Attach an I2C device to the shared bus with the given address/speed.
+ */
+esp_err_t i2c_bus_shared_add_device(uint16_t address,
+                                    uint32_t scl_speed_hz,
+                                    i2c_master_dev_handle_t *ret_handle);
 
 #ifdef __cplusplus
 }

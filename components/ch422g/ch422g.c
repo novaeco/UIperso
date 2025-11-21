@@ -7,8 +7,7 @@
 
 #include "i2c_bus_shared.h"
 
-#define CH422G_I2C_TIMEOUT_TICKS   i2c_bus_shared_timeout_ticks()
-
+#define CH422G_I2C_TIMEOUT_MS      i2c_bus_shared_timeout_ms()
 #define CH422G_I2C_RETRIES         3
 #define CH422G_I2C_RETRY_DELAY_MS  3
 
@@ -28,6 +27,7 @@ static struct
     bool initialized;
     bool io_ready;
     uint8_t outputs;
+    i2c_master_dev_handle_t dev;
 } s_ctx;
 
 static esp_err_t ch422g_write_outputs(void)
@@ -42,12 +42,7 @@ static esp_err_t ch422g_write_outputs(void)
 
     for (int attempt = 1; attempt <= CH422G_I2C_RETRIES; ++attempt)
     {
-        err = i2c_master_write_to_device(
-            i2c_bus_shared_port(),
-            IOEXT_I2C_ADDRESS,
-            &payload,
-            sizeof(payload),
-            CH422G_I2C_TIMEOUT_TICKS);
+        err = i2c_master_transmit(s_ctx.dev, &payload, sizeof(payload), CH422G_I2C_TIMEOUT_MS);
 
         if (err == ESP_OK)
         {
@@ -98,6 +93,8 @@ esp_err_t ch422g_init(void)
     }
 
     ESP_RETURN_ON_ERROR(i2c_bus_shared_init(), TAG, "Failed to init shared I2C bus");
+
+    ESP_RETURN_ON_ERROR(i2c_bus_shared_add_device(IOEXT_I2C_ADDRESS, 100000, &s_ctx.dev), TAG, "Failed to add CH422G to shared bus");
     s_ctx.io_ready = true;
 
     // Initialize outputs to a safe default (all released/disabled)
@@ -112,11 +109,6 @@ esp_err_t ch422g_init(void)
     s_ctx.initialized = true;
     ESP_LOGI(TAG, "IO extension ready on addr 0x%02X", IOEXT_I2C_ADDRESS);
     return ESP_OK;
-}
-
-i2c_port_t ch422g_get_i2c_port(void)
-{
-    return i2c_bus_shared_port();
 }
 
 bool ch422g_is_available(void)
