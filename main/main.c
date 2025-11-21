@@ -24,6 +24,9 @@
 
 static const char *TAG = "MAIN";
 
+// Guard against re-enabling LVGL's custom tick: we drive lv_tick_inc() via esp_timer.
+_Static_assert(LV_TICK_CUSTOM == 0, "LV_TICK_CUSTOM must remain disabled when using esp_timer-driven lv_tick_inc()");
+
 // Power-on sequencing derived from ST7262 / Waveshare timing (VDD -> DISP/backlight)
 #define LCD_POWER_STABILIZE_DELAY_MS   20
 
@@ -207,6 +210,10 @@ void app_main(void)
         if (timer_err != ESP_OK)
         {
             ESP_LOGE(TAG, "Failed to start LVGL tick timer (%s)", esp_err_to_name(timer_err));
+        }
+        else
+        {
+            ESP_LOGI(TAG, "LVGL tick: esp_timer 1 ms (LV_TICK_CUSTOM=0)");
         }
     }
 

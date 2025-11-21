@@ -55,7 +55,7 @@
  * OS and tick configuration
  *====================*/
 #define LV_USE_OS                 LV_OS_FREERTOS
-#define LV_TICK_CUSTOM            1
+#define LV_TICK_CUSTOM            0
 #define LV_TICK_CUSTOM_INCLUDE    "esp_timer.h"
 #define LV_TICK_CUSTOM_SYS_TIME_EXPR   (esp_timer_get_time() / 1000ULL)
 
