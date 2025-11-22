@@ -6,6 +6,7 @@
 #include "driver/gpio.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
+#include "esp_psram.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esp_log.h"
 #include "hal/lcd_types.h"
@@ -87,6 +88,12 @@ void rgb_lcd_init(void)
         return;
     }
 
+    if (!esp_psram_is_initialized())
+    {
+        ESP_LOGE(TAG, "PSRAM not initialized: cannot allocate LVGL draw buffers");
+        return;
+    }
+
     const size_t buf_size = (size_t)LCD_H_RES * LVGL_DRAW_BUF_LINES * LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565);
 
     s_buf1 = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
@@ -161,6 +168,13 @@ void rgb_lcd_init(void)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "RGB panel init failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    err = esp_lcd_panel_disp_on_off(s_panel_handle, true);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "RGB panel on/off failed: %s", esp_err_to_name(err));
         return;
     }
 

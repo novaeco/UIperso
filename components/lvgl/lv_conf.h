@@ -16,9 +16,15 @@
 /*====================
  * Memory settings
  *====================*/
-#define LV_MEM_SIZE               (128U * 1024U)
+#define LV_MEM_CUSTOM             1
+#define LV_MEM_CUSTOM_INCLUDE     "esp_heap_caps.h"
+#define LV_MEM_CUSTOM_ALLOC       heap_caps_malloc
+#define LV_MEM_CUSTOM_FREE        heap_caps_free
+#define LV_MEM_CUSTOM_REALLOC     heap_caps_realloc
+#define LV_MEM_CUSTOM_GET_SIZE    heap_caps_get_allocated_size
+#define LV_MEM_CUSTOM_ATTR        MALLOC_CAP_SPIRAM
+#define LV_MEM_SIZE               (256U * 1024U)
 #define LV_MEMCPY_MEMSET_STD      1
-#define LV_MEM_ADR                0
 
 /*====================
  * Logging
