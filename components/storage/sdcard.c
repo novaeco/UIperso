@@ -112,7 +112,14 @@ static esp_err_t sdcard_mount(void)
     err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
     if (err != ESP_OK)
     {
-        ESP_LOGW(TAG, "Failed to mount %s (%s)", SDCARD_MOUNT_POINT, esp_err_to_name(err));
+        if (err == ESP_ERR_TIMEOUT)
+        {
+            ESP_LOGW(TAG, "No SD card detected on %s (timeout); continuing without storage", SDCARD_MOUNT_POINT);
+        }
+        else
+        {
+            ESP_LOGW(TAG, "Failed to mount %s (%s)", SDCARD_MOUNT_POINT, esp_err_to_name(err));
+        }
         if (bus_initialized_here)
         {
             spi_bus_free(host.slot);

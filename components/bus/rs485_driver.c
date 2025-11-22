@@ -5,9 +5,9 @@
 #include "esp_log.h"
 
 #define RS485_UART_NUM UART_NUM_1
-#define RS485_TXD_PIN GPIO_NUM_17  // TODO: validate pin mapping
-#define RS485_RXD_PIN GPIO_NUM_18  // TODO: validate pin mapping
-#define RS485_DE_RE_PIN GPIO_NUM_16  // Shared DE/RE, high = transmit
+#define RS485_TXD_PIN GPIO_NUM_15  // TX -> RS485_TXD (Waveshare 7B wiring)
+#define RS485_RXD_PIN GPIO_NUM_16  // RX <- RS485_RXD (Waveshare 7B wiring)
+#define RS485_DE_RE_PIN GPIO_NUM_6   // Shared DE/RE, high = transmit
 
 static const char *TAG = "RS485";
 static bool s_uart_initialized = false;
