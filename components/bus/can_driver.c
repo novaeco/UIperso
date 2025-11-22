@@ -42,7 +42,7 @@ esp_err_t can_bus_init(void)
     }
 
     s_can_started = true;
-    ESP_LOGI(TAG, "TWAI bus initialized (loopback mode, 500 kbit/s)");
+    ESP_LOGI(TAG, "TWAI bus initialized (normal mode, 500 kbit/s)");
     return ESP_OK;
 }
 
