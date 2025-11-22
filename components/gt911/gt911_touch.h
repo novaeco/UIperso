@@ -8,8 +8,10 @@ extern "C" {
 
 /**
  * @brief Initialize the GT911 touch controller and register the LVGL input device.
+ *
+ * @param disp LVGL display handle to bind the input device to (fallback to default if NULL).
  */
-void gt911_init(void);
+void gt911_init(lv_display_t *disp);
 
 /**
  * @brief Access the registered LVGL input device (NULL if not initialized).

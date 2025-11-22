@@ -441,7 +441,14 @@ static esp_err_t gt911_update_config(void)
     return ESP_OK;
 }
 
-void gt911_init(void)
+/*
+ * Fixes:
+ * - Enforce LVGL display availability before registering the GT911 input device by requiring
+ *   a display handle (or falling back to the default) and binding the indev to it.
+ * - Keeps the prior initialization flow unchanged when touch hardware is present.
+ */
+
+void gt911_init(lv_display_t *disp)
 {
     if (s_initialized)
     {
@@ -482,8 +489,8 @@ void gt911_init(void)
 
     ESP_LOGI(TAG, "GT911 ready: %ux%u, report %u Hz", GT911_RESOLUTION_X, GT911_RESOLUTION_Y, GT911_REPORT_RATE_HZ);
 
-    lv_display_t *disp = lv_display_get_default();
-    if (disp == NULL)
+    lv_display_t *target_disp = disp ? disp : lv_display_get_default();
+    if (target_disp == NULL)
     {
         ESP_LOGE(TAG, "No default LVGL display; skipping GT911 input device registration");
         return;
@@ -498,10 +505,10 @@ void gt911_init(void)
 
     lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(s_indev, gt911_lvgl_read);
-    lv_indev_set_display(s_indev, disp);
+    lv_indev_set_display(s_indev, target_disp);
 
     s_initialized = true;
-    ESP_LOGI(TAG, "GT911 touch initialized");
+    ESP_LOGI(TAG, "GT911 touch initialized; LVGL input device registered");
 }
 
 lv_indev_t *gt911_get_input_device(void)

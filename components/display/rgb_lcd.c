@@ -59,6 +59,13 @@ static esp_lcd_panel_handle_t s_panel_handle = NULL;
 static uint8_t *s_buf1 = NULL;
 static uint8_t *s_buf2 = NULL;
 
+/*
+ * Fixes:
+ * - Treat ESP_ERR_NOT_SUPPORTED from esp_lcd_panel_disp_on_off() as a non-fatal case because
+ *   the Waveshare RGB panel is powered via GPIO/CH422G rather than a driver-controlled signal.
+ * - Keep the rest of the LVGL pipeline unchanged.
+ */
+
 static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
     const int32_t x1 = area->x1;
@@ -172,7 +179,11 @@ void rgb_lcd_init(void)
     }
 
     err = esp_lcd_panel_disp_on_off(s_panel_handle, true);
-    if (err != ESP_OK)
+    if (err == ESP_ERR_NOT_SUPPORTED)
+    {
+        ESP_LOGW(TAG, "disp_on_off not supported by this RGB panel, ignoring");
+    }
+    else if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "RGB panel on/off failed: %s", esp_err_to_name(err));
         return;
