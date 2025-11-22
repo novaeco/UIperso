@@ -163,17 +163,26 @@ void app_main(void)
         logs_panel_add_log("Extenseur IO indisponible : séquence LCD sautée");
     }
 
+    ESP_LOGI(TAG, "After CH422G/LCD sequencing, before LVGL core init");
+
     // LVGL + display must be ready before GT911 so the indev can bind to the default display
     lv_init();
+    ESP_LOGI(TAG, "After lv_init(), before RGB LCD creation");
+
     rgb_lcd_init();
+    ESP_LOGI(TAG, "RGB LCD init done, retrieving lv_display_t handle");
+
     lv_display_t *disp = rgb_lcd_get_disp();
     if (disp == NULL)
     {
         ESP_LOGE(TAG, "RGB display not available; skipping touch init");
         logs_panel_add_log("Afficheur LVGL indisponible : tactile désactivé");
     }
+
+    ESP_LOGI(TAG, "Before GT911 init (display %s)", disp ? "ready" : "missing");
     logs_panel_add_log("Init GT911 en cours");
     gt911_init(disp);
+    ESP_LOGI(TAG, "After GT911 init, proceeding with peripherals");
 
     esp_err_t can_err = can_bus_init();
     if (can_err != ESP_OK)

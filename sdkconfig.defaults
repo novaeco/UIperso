@@ -34,6 +34,9 @@ CONFIG_LV_FONT_MONTSERRAT_24=y
 # Prevent regression to the double-tick panic seen when CONFIG_LV_TICK_CUSTOM was enabled
 CONFIG_LV_TICK_CUSTOM=n
 
+# Ensure panic handler prints a backtrace before rebooting (avoid silent rst:0xc loops)
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+
 # SDSPI fallback pins (used only if the CH422G IO extension is unavailable)
 CONFIG_SDCARD_SPI_MOSI_GPIO=11
 CONFIG_SDCARD_SPI_MISO_GPIO=13
