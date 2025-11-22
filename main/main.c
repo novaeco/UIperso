@@ -233,6 +233,16 @@ void app_main(void)
         ESP_LOGW(TAG, "microSD initialization failed (%s)", esp_err_to_name(sd_err));
     }
 
+#if LV_TICK_CUSTOM
+    /*
+     * Prevent the historical double-tick panic that used to occur right after
+     * "GT911 ready" when LV_TICK_CUSTOM (LVGL side) was enabled while the
+     * esp_timer-driven lv_tick_inc(1) callback was also running. If a custom
+     * tick is configured, skip the esp_timer source instead of rebooting on an
+     * LVGL assert.
+     */
+    ESP_LOGW(TAG, "LV_TICK_CUSTOM is enabled; skipping esp_timer LVGL tick source to avoid double counting");
+#else
     const esp_timer_create_args_t tick_timer_args = {
         .callback = &lvgl_tick_cb,
         .dispatch_method = ESP_TIMER_TASK,
@@ -256,6 +266,7 @@ void app_main(void)
             ESP_LOGI(TAG, "LVGL tick: esp_timer 1 ms (LV_TICK_CUSTOM=0)");
         }
     }
+#endif
 
     ui_manager_init();
     ui_manager_set_degraded(degraded_mode);

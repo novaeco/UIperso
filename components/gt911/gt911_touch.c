@@ -455,6 +455,13 @@ esp_err_t gt911_init(lv_display_t *disp)
         return ESP_OK;
     }
 
+    /* Avoid LVGL-side asserts/restarts if gt911_init is called before lv_init() */
+    if (!lv_is_initialized())
+    {
+        ESP_LOGE(TAG, "LVGL not initialized; skipping GT911 registration to avoid panic");
+        return ESP_ERR_INVALID_STATE;
+    }
+
     esp_err_t err = gt911_bus_init();
     if (err != ESP_OK)
     {
