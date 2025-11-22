@@ -18,6 +18,9 @@
  *   esp_restart_noos (panic reset). We now validate the display upfront and
  *   propagate a non-fatal error so the system can stay alive in degraded mode
  *   when the panel or touch are missing.
+ * - Re-entrance is now tolerated: calling ui_manager_init() twice simply logs
+ *   a warning and returns success instead of rebuilding screens (which could
+ *   re-trigger LVGL internal assertions on duplicate objects).
  */
 
 static const char *TAG = "ui_manager";
@@ -242,6 +245,14 @@ void ui_manager_set_degraded(bool degraded)
 
 esp_err_t ui_manager_init(void)
 {
+    if (s_ui_ready)
+    {
+        ESP_LOGW(TAG, "UI already initialized; skipping duplicate init");
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "ui_manager_init: default disp=%p, degraded=%d", (void *)lv_disp_get_default(), s_degraded);
+
     if (lv_disp_get_default() == NULL)
     {
         ESP_LOGE(TAG, "Default LVGL display missing; UI init aborted (degraded mode)");
