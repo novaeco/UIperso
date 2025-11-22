@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 #include "lvgl.h"
 
 #ifdef __cplusplus
@@ -12,6 +14,7 @@ extern "C" {
  * @param disp LVGL display handle to bind the input device to (fallback to default if NULL).
  */
 void gt911_init(lv_display_t *disp);
+bool gt911_is_initialized(void);
 
 /**
  * @brief Access the registered LVGL input device (NULL if not initialized).

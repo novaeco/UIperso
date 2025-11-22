@@ -1,5 +1,7 @@
 #include "ui_manager.h"
 
+#include <stdbool.h>
+
 #include "esp_log.h"
 #include "lvgl.h"
 
@@ -17,6 +19,93 @@ static lv_obj_t *active_nav_button = NULL;
 static lv_obj_t *dashboard_nav_button = NULL;
 static lv_obj_t *system_nav_button = NULL;
 static lv_obj_t *logs_nav_button = NULL;
+static lv_obj_t *dashboard_alert = NULL;
+static lv_obj_t *system_alert = NULL;
+static lv_obj_t *logs_alert = NULL;
+static bool s_degraded = false;
+static bool s_ui_ready = false;
+
+static void degraded_details_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED)
+    {
+        return;
+    }
+
+    logs_panel_add_log("Mode dégradé : vérifier CH422G, affichage RGB et tactile GT911");
+}
+
+static lv_obj_t *create_degraded_alert(lv_obj_t *screen)
+{
+    if (screen == NULL)
+    {
+        return NULL;
+    }
+
+    lv_obj_t *alert = lv_obj_create(screen);
+    lv_obj_remove_style_all(alert);
+    lv_obj_set_width(alert, lv_pct(100));
+    lv_obj_set_style_radius(alert, 8, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(alert, lv_color_hex(0xC62828), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(alert, LV_OPA_80, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(alert, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(alert, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(alert, 12, LV_PART_MAIN);
+    lv_obj_set_style_border_width(alert, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(alert, 12, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(alert, lv_color_hex(0x5D1A1A), LV_PART_MAIN);
+    lv_obj_set_layout(alert, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(alert, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(alert, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_align(alert, LV_ALIGN_TOP_MID, 0, 12);
+
+    lv_obj_t *label = lv_label_create(alert);
+    lv_obj_add_style(label, lv_theme_custom_style_label(), LV_PART_MAIN);
+    lv_label_set_text(label, "Mode dégradé : matériel LCD/tactile partiellement disponible");
+
+    lv_obj_t *btn = lv_btn_create(alert);
+    lv_obj_remove_style_all(btn);
+    lv_obj_add_style(btn, lv_theme_custom_style_button(), LV_PART_MAIN);
+    lv_obj_add_style(btn, lv_theme_custom_style_button_active(), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_pad_left(btn, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(btn, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(btn, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(btn, 6, LV_PART_MAIN);
+    lv_obj_add_event_cb(btn, degraded_details_event_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *btn_label = lv_label_create(btn);
+    lv_obj_add_style(btn_label, lv_theme_custom_style_label(), LV_PART_MAIN);
+    lv_label_set_text(btn_label, "Détails");
+    lv_obj_center(btn_label);
+
+    lv_obj_add_flag(alert, LV_OBJ_FLAG_HIDDEN);
+
+    return alert;
+}
+
+static void set_alert_visibility(lv_obj_t *alert, bool visible)
+{
+    if (alert == NULL)
+    {
+        return;
+    }
+
+    if (visible)
+    {
+        lv_obj_clear_flag(alert, LV_OBJ_FLAG_HIDDEN);
+    }
+    else
+    {
+        lv_obj_add_flag(alert, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void update_degraded_alerts(void)
+{
+    set_alert_visibility(dashboard_alert, s_degraded);
+    set_alert_visibility(system_alert, s_degraded);
+    set_alert_visibility(logs_alert, s_degraded);
+}
 
 static lv_obj_t *get_nav_button_for_screen(lv_obj_t *screen)
 {
@@ -127,6 +216,20 @@ static void create_navbar(lv_obj_t *screen)
     }
 }
 
+void ui_manager_set_degraded(bool degraded)
+{
+    s_degraded = degraded;
+
+    if (s_ui_ready)
+    {
+        update_degraded_alerts();
+    }
+    else if (s_degraded)
+    {
+        ESP_LOGW(TAG, "Mode dégradé activé avant l'initialisation de l'UI");
+    }
+}
+
 void ui_manager_init(void)
 {
     lv_theme_custom_init();
@@ -138,6 +241,13 @@ void ui_manager_init(void)
     create_navbar(dashboard_screen);
     create_navbar(system_screen);
     create_navbar(logs_screen);
+
+    dashboard_alert = create_degraded_alert(dashboard_screen);
+    system_alert = create_degraded_alert(system_screen);
+    logs_alert = create_degraded_alert(logs_screen);
+
+    s_ui_ready = true;
+    update_degraded_alerts();
 
     set_active_nav_button(dashboard_nav_button);
 

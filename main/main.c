@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <stdbool.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -114,6 +115,7 @@ static void lvgl_tick_cb(void *arg)
 
 void app_main(void)
 {
+    bool degraded_mode = false;
     esp_log_level_set("*", ESP_LOG_INFO);
     ESP_LOGI(TAG, "ESP32-S3 UI phase 4 starting");
     log_reset_diagnostics();
@@ -126,6 +128,8 @@ void app_main(void)
     if (ch_err != ESP_OK)
     {
         ESP_LOGW(TAG, "CH422G init failed (0x%x). Running without IO expander features.", ch_err);
+        degraded_mode = true;
+        ui_manager_set_degraded(true);
     }
 
     i2c_scan_bus(i2c_bus_shared_handle());
@@ -137,6 +141,8 @@ void app_main(void)
         {
             ESP_LOGW(TAG, "EXIO6 (LCD_VDD_EN) enable failed (%s); continuing degraded", esp_err_to_name(lcd_err));
             logs_panel_add_log("LCD_VDD_EN: échec (%s)", esp_err_to_name(lcd_err));
+            degraded_mode = true;
+            ui_manager_set_degraded(true);
         }
         else
         {
@@ -150,6 +156,8 @@ void app_main(void)
         {
             ESP_LOGW(TAG, "EXIO2 (DISP/backlight) enable failed (%s); UI will start without panel", esp_err_to_name(bl_err));
             logs_panel_add_log("Backlight: échec (%s)", esp_err_to_name(bl_err));
+            degraded_mode = true;
+            ui_manager_set_degraded(true);
         }
         else
         {
@@ -161,6 +169,8 @@ void app_main(void)
     {
         ESP_LOGW(TAG, "IO extension unavailable; skipping LCD_VDD_EN / DISP sequencing (UI will start degraded)");
         logs_panel_add_log("Extenseur IO indisponible : séquence LCD sautée");
+        degraded_mode = true;
+        ui_manager_set_degraded(true);
     }
 
     ESP_LOGI(TAG, "After CH422G/LCD sequencing, before LVGL core init");
@@ -177,11 +187,20 @@ void app_main(void)
     {
         ESP_LOGE(TAG, "RGB display not available; skipping touch init");
         logs_panel_add_log("Afficheur LVGL indisponible : tactile désactivé");
+        degraded_mode = true;
+        ui_manager_set_degraded(true);
     }
 
     ESP_LOGI(TAG, "Before GT911 init (display %s)", disp ? "ready" : "missing");
     logs_panel_add_log("Init GT911 en cours");
     gt911_init(disp);
+    if (!gt911_is_initialized())
+    {
+        ESP_LOGW(TAG, "GT911 init failed; input device not registered");
+        logs_panel_add_log("GT911: init échouée, tactile indisponible");
+        degraded_mode = true;
+        ui_manager_set_degraded(true);
+    }
     ESP_LOGI(TAG, "After GT911 init, proceeding with peripherals");
 
     esp_err_t can_err = can_bus_init();
@@ -239,6 +258,7 @@ void app_main(void)
     }
 
     ui_manager_init();
+    ui_manager_set_degraded(degraded_mode);
 
     while (true)
     {

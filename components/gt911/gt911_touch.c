@@ -511,6 +511,11 @@ void gt911_init(lv_display_t *disp)
     ESP_LOGI(TAG, "GT911 touch initialized; LVGL input device registered");
 }
 
+bool gt911_is_initialized(void)
+{
+    return s_initialized;
+}
+
 lv_indev_t *gt911_get_input_device(void)
 {
     return s_indev;
