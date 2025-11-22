@@ -23,13 +23,15 @@ static void ensure_log_buffer_initialized(void)
     }
 }
 
-static void trim_buffer_if_needed(size_t additional)
+static bool trim_buffer_if_needed(size_t additional)
 {
     size_t current = strlen(log_buffer);
     if (current + additional < LOG_PANEL_BUFFER_SIZE - 1)
     {
-        return;
+        return false;
     }
+
+    bool trimmed = false;
 
     while (current + additional >= LOG_PANEL_BUFFER_SIZE - 1 && current > 0)
     {
@@ -38,12 +40,16 @@ static void trim_buffer_if_needed(size_t additional)
         {
             log_buffer[0] = '\0';
             current = 0;
+            trimmed = true;
             break;
         }
         size_t remove_len = (size_t)(newline - log_buffer) + 1;
         memmove(log_buffer, newline + 1, current - remove_len + 1);
         current = strlen(log_buffer);
+        trimmed = true;
     }
+
+    return trimmed;
 }
 
 lv_obj_t *logs_panel_create(void)
@@ -102,15 +108,26 @@ void logs_panel_add_log(const char *fmt, ...)
     va_end(args);
 
     size_t line_len = strnlen(line, sizeof(line));
+    const size_t total_append = line_len + 1; // account for appended '\n'
 
-    trim_buffer_if_needed(line_len + 2);
+    bool trimmed = trim_buffer_if_needed(total_append);
 
     strncat(log_buffer, line, LOG_PANEL_BUFFER_SIZE - strlen(log_buffer) - 1);
     strncat(log_buffer, "\n", LOG_PANEL_BUFFER_SIZE - strlen(log_buffer) - 1);
 
     if (log_text_area)
     {
-        lv_textarea_set_text(log_text_area, log_buffer);
+        if (trimmed)
+        {
+            /* When the buffer was trimmed, refresh the full content to keep LVGL in sync. */
+            lv_textarea_set_text(log_text_area, log_buffer);
+        }
+        else
+        {
+            /* Fast path: append the new line without re-applying the entire buffer. */
+            lv_textarea_add_text(log_text_area, line);
+            lv_textarea_add_text(log_text_area, "\n");
+        }
         lv_textarea_set_cursor_pos(log_text_area, LV_TEXTAREA_CURSOR_LAST);
     }
 }
