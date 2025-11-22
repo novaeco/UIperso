@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 /**
- * @brief Initialize the onboard CAN (TWAI) controller in loopback mode.
+ * @brief Initialize the onboard CAN (TWAI) controller.
  *
  * The function configures GPIOs, installs the TWAI driver, and starts it.
  */

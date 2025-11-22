@@ -1,12 +1,13 @@
 #include "can_driver.h"
 
 #include <inttypes.h>
+#include <stdbool.h>
 
 #include "driver/gpio.h"
 #include "esp_log.h"
 
-#define CAN_TX_GPIO GPIO_NUM_43  // TODO: confirm against Waveshare schematics
-#define CAN_RX_GPIO GPIO_NUM_44  // TODO: confirm against Waveshare schematics
+#define CAN_TX_GPIO GPIO_NUM_20
+#define CAN_RX_GPIO GPIO_NUM_19
 
 static const char *TAG = "CAN_DRV";
 static bool s_can_started = false;
@@ -15,6 +16,7 @@ esp_err_t can_bus_init(void)
 {
     if (s_can_started)
     {
+        ESP_LOGI(TAG, "CAN bus already started; skipping init");
         return ESP_OK;
     }
 
@@ -27,18 +29,27 @@ esp_err_t can_bus_init(void)
     const twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     esp_err_t err = twai_driver_install(&g_config, &t_config, &f_config);
-    if (err != ESP_OK)
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
     {
-        ESP_LOGE(TAG, "Failed to install TWAI driver (%s)", esp_err_to_name(err));
+        ESP_LOGE(TAG, "twai_driver_install failed: %s (CAN désactivé)", esp_err_to_name(err));
         return err;
     }
 
-    err = twai_start();
-    if (err != ESP_OK)
+    if (err == ESP_ERR_INVALID_STATE)
     {
-        ESP_LOGE(TAG, "Failed to start TWAI driver (%s)", esp_err_to_name(err));
-        twai_driver_uninstall();
+        ESP_LOGW(TAG, "TWAI driver already installed; skipping install");
+    }
+
+    err = twai_start();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGE(TAG, "twai_start failed: %s (CAN désactivé)", esp_err_to_name(err));
         return err;
+    }
+
+    if (err == ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGW(TAG, "TWAI driver already started; skipping start");
     }
 
     s_can_started = true;

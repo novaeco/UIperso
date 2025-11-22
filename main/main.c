@@ -243,9 +243,16 @@ void app_main(void)
     esp_err_t can_err = can_bus_init();
     if (can_err != ESP_OK)
     {
-        log_non_fatal_error("CAN init", can_err);
+        ESP_LOGE(TAG,
+                 "CAN init failed: %s (CAN désactivé, on continue sans CAN)",
+                 esp_err_to_name(can_err));
+        logs_panel_add_log("CAN: init échouée (%s), CAN désactivé", esp_err_to_name(can_err));
         degraded_mode = true;
         ui_manager_set_degraded(true);
+    }
+    else
+    {
+        ESP_LOGI(TAG, "CAN init OK, bus actif");
     }
 
     ESP_LOGI(TAG, "Init peripherals step 2: rs485_init()");
