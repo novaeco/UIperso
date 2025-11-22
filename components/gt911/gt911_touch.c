@@ -448,17 +448,18 @@ static esp_err_t gt911_update_config(void)
  * - Keeps the prior initialization flow unchanged when touch hardware is present.
  */
 
-void gt911_init(lv_display_t *disp)
+esp_err_t gt911_init(lv_display_t *disp)
 {
     if (s_initialized)
     {
-        return;
+        return ESP_OK;
     }
 
-    if (gt911_bus_init() != ESP_OK)
+    esp_err_t err = gt911_bus_init();
+    if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to initialize I2C bus for GT911");
-        return;
+        return err;
     }
 
     const esp_err_t reset_err = gt911_hw_reset();
@@ -478,13 +479,13 @@ void gt911_init(lv_display_t *disp)
     if (!identity_ok)
     {
         gt911_disable("ID read failures", ESP_ERR_INVALID_RESPONSE);
-        return;
+        return ESP_ERR_INVALID_RESPONSE;
     }
 
     if (gt911_update_config() != ESP_OK)
     {
         gt911_disable("configuration update failure", ESP_ERR_INVALID_RESPONSE);
-        return;
+        return ESP_ERR_INVALID_RESPONSE;
     }
 
     ESP_LOGI(TAG, "GT911 ready: %ux%u, report %u Hz", GT911_RESOLUTION_X, GT911_RESOLUTION_Y, GT911_REPORT_RATE_HZ);
@@ -493,14 +494,14 @@ void gt911_init(lv_display_t *disp)
     if (target_disp == NULL)
     {
         ESP_LOGE(TAG, "No default LVGL display; skipping GT911 input device registration");
-        return;
+        return ESP_ERR_INVALID_STATE;
     }
 
     s_indev = lv_indev_create();
     if (s_indev == NULL)
     {
         ESP_LOGE(TAG, "Failed to create LVGL input device");
-        return;
+        return ESP_ERR_NO_MEM;
     }
 
     lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
@@ -509,6 +510,8 @@ void gt911_init(lv_display_t *disp)
 
     s_initialized = true;
     ESP_LOGI(TAG, "GT911 touch initialized; LVGL input device registered");
+
+    return ESP_OK;
 }
 
 bool gt911_is_initialized(void)

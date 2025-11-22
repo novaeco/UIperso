@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 
+#include "esp_err.h"
 #include "lvgl.h"
 
 #ifdef __cplusplus
@@ -13,7 +14,7 @@ extern "C" {
  *
  * @param disp LVGL display handle to bind the input device to (fallback to default if NULL).
  */
-void gt911_init(lv_display_t *disp);
+esp_err_t gt911_init(lv_display_t *disp);
 bool gt911_is_initialized(void);
 
 /**

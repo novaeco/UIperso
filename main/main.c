@@ -193,11 +193,11 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Before GT911 init (display %s)", disp ? "ready" : "missing");
     logs_panel_add_log("Init GT911 en cours");
-    gt911_init(disp);
-    if (!gt911_is_initialized())
+    esp_err_t touch_err = gt911_init(disp);
+    if (touch_err != ESP_OK || !gt911_is_initialized())
     {
-        ESP_LOGW(TAG, "GT911 init failed; input device not registered");
-        logs_panel_add_log("GT911: init échouée, tactile indisponible");
+        ESP_LOGW(TAG, "GT911 init failed (%s); input device not registered", esp_err_to_name(touch_err));
+        logs_panel_add_log("GT911: init échouée (%s), tactile indisponible", esp_err_to_name(touch_err));
         degraded_mode = true;
         ui_manager_set_degraded(true);
     }
