@@ -24,7 +24,9 @@
 
 static const char *TAG = "MAIN";
 
-// Guard against re-enabling LVGL's custom tick: we drive lv_tick_inc() via esp_timer.
+// Reset loop root-cause (panic reason=4) was LVGL tick double-counting when CONFIG_LV_TICK_CUSTOM=1
+// coexisted with the esp_timer-driven lv_tick_inc(1) callback. Keep the custom tick forcefully
+// disabled here so the esp_timer path remains the single tick source.
 // Use only the ESP-IDF Kconfig symbol to avoid referencing undefined LVGL-side macros.
 #if defined(CONFIG_LV_TICK_CUSTOM) && (CONFIG_LV_TICK_CUSTOM != 0)
 #error "CONFIG_LV_TICK_CUSTOM must be disabled (0) when using esp_timer-driven lv_tick_inc()"

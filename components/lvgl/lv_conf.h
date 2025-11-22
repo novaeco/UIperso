@@ -61,6 +61,8 @@
  * OS and tick configuration
  *====================*/
 #define LV_USE_OS                 LV_OS_FREERTOS
+/* Keep LV_TICK_CUSTOM disabled: enabling it alongside the esp_timer-based lv_tick_inc(1) callback
+ * previously caused an LVGL assert right after GT911 init (double tick source -> panic/restart). */
 #define LV_TICK_CUSTOM            0
 #define LV_TICK_CUSTOM_INCLUDE    "esp_timer.h"
 #define LV_TICK_CUSTOM_SYS_TIME_EXPR   (esp_timer_get_time() / 1000ULL)
