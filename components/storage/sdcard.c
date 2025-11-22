@@ -31,7 +31,6 @@ static const char *TAG = "SDCARD";
 
 static bool s_mounted = false;
 static sdmmc_card_t *s_card = NULL;
-static bool s_use_ioext_cs = false;
 
 static esp_err_t sdcard_mount(void)
 {
@@ -84,37 +83,37 @@ static esp_err_t sdcard_mount(void)
     };
 
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    s_use_ioext_cs = ch422g_sdcard_cs_available();
 
-    if (s_use_ioext_cs)
+    // Keep the CS line released through the IO expander if available so the
+    // card is not spuriously selected when the SPI bus comes up. The actual CS
+    // toggling during SPI transactions is handled by the GPIO configured below.
+    if (ch422g_sdcard_cs_available())
     {
         esp_err_t ch_err = ch422g_set_sdcard_cs(false);
         if (ch_err != ESP_OK)
         {
-            ESP_LOGW(TAG, "Unable to deassert SD CS via IO extension (%s), falling back to GPIO", esp_err_to_name(ch_err));
-            s_use_ioext_cs = false;
+            ESP_LOGW(TAG, "Unable to deassert SD CS via IO extension (%s), continuing", esp_err_to_name(ch_err));
         }
-    }
-
-    // Legacy SDSPI command/data callbacks have been removed from ESP-IDF 6.1.
-    // Without those hooks we cannot safely bit-bang the CS line via the CH422G
-    // IO expander, so we fall back to driving CS directly from a GPIO pin.
-    // Keeping the detection logic allows future re-enabling should ESP-IDF
-    // expose an equivalent hook again.
-    if (s_use_ioext_cs)
-    {
-        ESP_LOGW(TAG, "SDSPI callbacks no longer available in ESP-IDF 6.1; using GPIO CS instead");
     }
 
     slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
     slot_config.host_id = host.slot;
 
+    // Treat "no card" as a normal situation: reduce the log level of the
+    // VFS/SDMMC helper during probing to avoid alarming E-level messages when
+    // the slot is empty, then restore it afterwards.
+    const esp_log_level_t prev_vfs_level = esp_log_level_get("vfs_fat_sdmmc");
+    esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_WARN);
+
     err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
+
+    esp_log_level_set("vfs_fat_sdmmc", prev_vfs_level);
+
     if (err != ESP_OK)
     {
         if (err == ESP_ERR_TIMEOUT)
         {
-            ESP_LOGW(TAG, "No SD card detected on %s (timeout); continuing without storage", SDCARD_MOUNT_POINT);
+            ESP_LOGW(TAG, "No SD card detected on %s; continuing without storage", SDCARD_MOUNT_POINT);
         }
         else
         {
