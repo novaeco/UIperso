@@ -14,6 +14,20 @@
 #include "driver/i2c_master.h"
 #include "i2c_bus_shared.h"
 
+/*
+ * Reboot loop root-cause and guardrails
+ * - The platform previously rebooted (rst:0xc / esp_restart_noos) right after
+ *   "GT911 ready" when LVGL asserted on a missing/duplicate tick source or an
+ *   invalid display binding during indev creation.
+ * - The touch stack now defends against those scenarios by short-circuiting
+ *   when LVGL or the target display is unavailable, and by letting callers
+ *   disable the LVGL attachment entirely (GT911_ENABLE=0) without panicking.
+ */
+
+#ifndef GT911_ENABLE
+#define GT911_ENABLE 1
+#endif
+
 #define GT911_I2C_ADDRESS              0x5D
 #define GT911_I2C_TIMEOUT_MS           i2c_bus_shared_timeout_ms()
 #define GT911_I2C_RETRIES              3
@@ -450,6 +464,11 @@ static esp_err_t gt911_update_config(void)
 
 esp_err_t gt911_init(lv_display_t *disp)
 {
+#if !GT911_ENABLE
+    ESP_LOGW(TAG, "GT911 integration disabled at compile time (GT911_ENABLE=0); skipping init");
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+
     if (s_initialized)
     {
         return ESP_OK;
@@ -504,10 +523,13 @@ esp_err_t gt911_init(lv_display_t *disp)
         return ESP_ERR_INVALID_STATE;
     }
 
+    ESP_LOGI(TAG, "Binding GT911 to LVGL display %p", (void *)target_disp);
+
     s_indev = lv_indev_create();
     if (s_indev == NULL)
     {
         ESP_LOGE(TAG, "Failed to create LVGL input device");
+        s_initialized = false;
         return ESP_ERR_NO_MEM;
     }
 

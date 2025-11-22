@@ -5,6 +5,10 @@
 #include "esp_err.h"
 #include "lvgl.h"
 
+#ifndef GT911_ENABLE
+#define GT911_ENABLE 1
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

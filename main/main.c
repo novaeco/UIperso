@@ -23,6 +23,19 @@
 #include "ui_manager.h"
 #include "logs_panel.h"
 
+/*
+ * Touch reboot loop post-mortem:
+ * A software reset (esp_restart_noos) was consistently triggered right after
+ * "GT911 ready" when LVGL/touch initialization hit an assert or error path
+ * (e.g., display handle missing, double LVGL tick source). The touch stack is
+ * now hardened to fail gracefully instead of restarting, and can be disabled
+ * at compile time via GT911_ENABLE for quick bisecting.
+ */
+
+#ifndef GT911_ENABLE
+#define GT911_ENABLE 1
+#endif
+
 static const char *TAG = "MAIN";
 
 // Reset loop root-cause (panic reason=4) was LVGL tick double-counting when CONFIG_LV_TICK_CUSTOM=1
@@ -191,6 +204,7 @@ void app_main(void)
         ui_manager_set_degraded(true);
     }
 
+#if GT911_ENABLE
     ESP_LOGI(TAG, "Before GT911 init (display %s)", disp ? "ready" : "missing");
     logs_panel_add_log("Init GT911 en cours");
     esp_err_t touch_err = gt911_init(disp);
@@ -201,6 +215,16 @@ void app_main(void)
         degraded_mode = true;
         ui_manager_set_degraded(true);
     }
+    else
+    {
+        ESP_LOGI(TAG, "GT911 successfully attached to LVGL (touch enabled)");
+    }
+#else
+    ESP_LOGW(TAG, "GT911 disabled at compile-time (GT911_ENABLE=0); skipping touch attachment");
+    logs_panel_add_log("GT911 désactivé (GT911_ENABLE=0)");
+    degraded_mode = true;
+    ui_manager_set_degraded(true);
+#endif
     ESP_LOGI(TAG, "After GT911 init, proceeding with peripherals");
 
     esp_err_t can_err = can_bus_init();
