@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stddef.h>
 #include <sys/param.h>
 #include "esp_log.h"
@@ -34,6 +35,17 @@
 
 #include "ch422g.h"
 #include "sdspi_ch422g.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Explicit declaration to avoid implicit declaration warnings on ESP-IDF 6.x builds.
+void esp_log_buffer_hex(const char *tag, const void *buffer, uint16_t buff_len);
+
+#ifdef __cplusplus
+}
+#endif
 
 
 // Compatibilité API ESP-IDF 6.x : sdspi_slot_config_t a été supprimé,
