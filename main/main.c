@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "lvgl.h"
 #include "driver/i2c_master.h"
 
@@ -135,6 +136,29 @@ static inline void log_non_fatal_error(const char *what, esp_err_t err)
 {
     ESP_LOGE(TAG, "%s failed: %s (non-fatal, degraded mode)", what, esp_err_to_name(err));
     logs_panel_add_log("%s: échec (%s)", what, esp_err_to_name(err));
+}
+
+static void log_heap_metrics(const char *stage)
+{
+    const size_t dram_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const size_t dram_min = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+    const size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    const size_t psram_min = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
+
+    ESP_LOGI(TAG,
+             "Heap (%s): DRAM free=%u (min=%u) bytes, PSRAM free=%u (min=%u) bytes",
+             stage,
+             (unsigned int)dram_free,
+             (unsigned int)dram_min,
+             (unsigned int)psram_free,
+             (unsigned int)psram_min);
+
+    logs_panel_add_log("Heap %s: DRAM %u/%u, PSRAM %u/%u",
+                       stage,
+                       (unsigned int)dram_free,
+                       (unsigned int)dram_min,
+                       (unsigned int)psram_free,
+                       (unsigned int)psram_min);
 }
 
 void app_main(void)
@@ -334,6 +358,8 @@ void app_main(void)
     {
         ui_manager_set_degraded(degraded_mode);
     }
+
+    log_heap_metrics("post-init");
 
     while (true)
     {
