@@ -55,17 +55,11 @@ static esp_err_t sdcard_mount(void)
         .sclk_io_num = CONFIG_SDCARD_SPI_SCK_GPIO,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .data4_io_num = -1,
-        .data5_io_num = -1,
-        .data6_io_num = -1,
-        .data7_io_num = -1,
         .max_transfer_sz = 4000,
-        .flags = 0,
-        .intr_flags = 0,
     };
 
     bool bus_initialized_here = false;
-    esp_err_t err = spi_bus_initialize(host.slot, &bus_config, SPI_DMA_CH_AUTO);
+    esp_err_t err = spi_bus_initialize(host.slot, &bus_config, SDSPI_DEFAULT_DMA);
     if (err == ESP_ERR_INVALID_STATE)
     {
         ESP_LOGW(TAG, "SPI bus already initialized, reusing");
@@ -91,16 +85,9 @@ static esp_err_t sdcard_mount(void)
 
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
 
-    // Explicitly set the Waveshare 7B wiring so the SDSPI layer matches the bus
-    // (MOSI=GPIO11, MISO=GPIO13, SCK=GPIO12). Chip-select is kept on the IO
-    // expander, so the driver must not try to toggle a GPIO CS line.
-    slot_config.gpio_miso = CONFIG_SDCARD_SPI_MISO_GPIO;
-    slot_config.gpio_mosi = CONFIG_SDCARD_SPI_MOSI_GPIO;
-    slot_config.gpio_sck = CONFIG_SDCARD_SPI_SCK_GPIO;
-
     // CS is routed through CH422G EXIO4. Keep it permanently asserted (active low)
-    // so the dedicated SPI device remains selected; the SDSPI driver will not
-    // toggle CS because gpio_cs is disabled below.
+    // so the dedicated SPI device remains selected; the SDSPI driver will still
+    // use the configured chip-select GPIO for standard wiring scenarios.
     if (ch422g_sdcard_cs_available())
     {
         esp_err_t ch_err = ch422g_set_sdcard_cs(true);
@@ -110,7 +97,7 @@ static esp_err_t sdcard_mount(void)
         }
     }
 
-    slot_config.gpio_cs = GPIO_NUM_NC;  // CS handled by CH422G EXIO4 (SD_CS)
+    slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
     slot_config.host_id = host.slot;
 
     err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
