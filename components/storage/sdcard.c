@@ -32,6 +32,11 @@ static const char *TAG = "SDCARD";
 static bool s_mounted = false;
 static sdmmc_card_t *s_card = NULL;
 
+static bool sdcard_no_media_error(esp_err_t err)
+{
+    return (err == ESP_ERR_TIMEOUT) || (err == ESP_ERR_NOT_FOUND);
+}
+
 static esp_err_t sdcard_mount(void)
 {
     if (s_mounted)
@@ -99,25 +104,17 @@ static esp_err_t sdcard_mount(void)
     slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
     slot_config.host_id = host.slot;
 
-    // Treat "no card" as a normal situation: reduce the log level of the
-    // VFS/SDMMC helper during probing to avoid alarming E-level messages when
-    // the slot is empty, then restore it afterwards.
-    const esp_log_level_t prev_vfs_level = esp_log_level_get("vfs_fat_sdmmc");
-    esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_WARN);
-
     err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
-
-    esp_log_level_set("vfs_fat_sdmmc", prev_vfs_level);
 
     if (err != ESP_OK)
     {
-        if (err == ESP_ERR_TIMEOUT)
+        if (sdcard_no_media_error(err))
         {
             ESP_LOGW(TAG, "No SD card detected on %s; continuing without storage", SDCARD_MOUNT_POINT);
         }
         else
         {
-            ESP_LOGW(TAG, "Failed to mount %s (%s)", SDCARD_MOUNT_POINT, esp_err_to_name(err));
+            ESP_LOGE(TAG, "Failed to mount %s (%s)", SDCARD_MOUNT_POINT, esp_err_to_name(err));
         }
         if (bus_initialized_here)
         {

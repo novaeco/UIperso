@@ -269,6 +269,8 @@ void app_main(void)
     ESP_LOGI(TAG, "Battery voltage: %.2f V, charging: %s", cs8501_get_battery_voltage(), cs8501_is_charging() ? "yes" : "no");
 
     ESP_LOGI(TAG, "Init peripherals step 4: sdcard_init()");
+    // Silence noisy IDF-level errors from the VFS FAT SDMMC helper when the slot is empty.
+    esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_NONE);
     esp_err_t sd_err = sdcard_init();
     if (sd_err == ESP_OK)
     {
@@ -279,9 +281,9 @@ void app_main(void)
             ESP_LOGW(TAG, "microSD test file failed (%s)", esp_err_to_name(test_err));
         }
     }
-    else
+    else if (sd_err != ESP_ERR_TIMEOUT && sd_err != ESP_ERR_NOT_FOUND)
     {
-        ESP_LOGW(TAG, "microSD initialization failed (%s)", esp_err_to_name(sd_err));
+        ESP_LOGE(TAG, "microSD initialization failed (%s)", esp_err_to_name(sd_err));
     }
 
     ESP_LOGI(TAG, "Init peripherals step 5: LVGL tick source");
