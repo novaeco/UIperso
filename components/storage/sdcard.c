@@ -11,7 +11,10 @@
 #include "driver/spi_common.h"
 #include "sdmmc_cmd.h"
 
-#include "ch422g.h"
+#include "sdspi_ch422g.h"
+
+// Waveshare ESP32-S3 Touch LCD 7B: microSD over SPI with CS on CH422G EXIO4.
+// The custom SDSPI host drives CS via the IO expander while keeping esp_vfs_fat_sdspi_mount API.
 
 #ifndef CONFIG_SDCARD_SPI_MOSI_GPIO
 #define CONFIG_SDCARD_SPI_MOSI_GPIO  GPIO_NUM_11  // Fallback wiring if IO extension unavailable
@@ -39,44 +42,6 @@ static const char *TAG = "SDCARD";
 static bool s_mounted = false;
 static sdmmc_card_t *s_card = NULL;
 
-static void sdcard_cs_assert_via_ch422g(void)
-{
-    if (!ch422g_sdcard_cs_available())
-    {
-        ESP_LOGW(TAG, "Cannot assert SD CS via CH422G: IO extension unavailable");
-        return;
-    }
-
-    esp_err_t err = ch422g_set_sdcard_cs(true);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to drive SD CS low via CH422G EXIO4 (%s)", esp_err_to_name(err));
-    }
-    else
-    {
-        ESP_LOGI(TAG, "CH422G EXIO4 driven low (SD CS asserted)");
-    }
-}
-
-static void sdcard_cs_deassert_via_ch422g(void)
-{
-    if (!ch422g_sdcard_cs_available())
-    {
-        ESP_LOGW(TAG, "Cannot release SD CS via CH422G: IO extension unavailable");
-        return;
-    }
-
-    esp_err_t err = ch422g_set_sdcard_cs(false);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to release SD CS via CH422G EXIO4 (%s)", esp_err_to_name(err));
-    }
-    else
-    {
-        ESP_LOGI(TAG, "CH422G EXIO4 released high (SD CS deasserted)");
-    }
-}
-
 static bool sdcard_no_media_error(esp_err_t err)
 {
     return (err == ESP_ERR_NOT_FOUND);
@@ -89,7 +54,7 @@ static esp_err_t sdcard_mount(void)
         return ESP_OK;
     }
 
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    sdmmc_host_t host = sdspi_host_ch422g_default();
     host.slot = CONFIG_SDCARD_SPI_HOST; // ESP32-S3: SPI2 (FSPI) disponible pour le slot µSD.
     host.max_freq_khz = 10000;          // Debug-friendly frequency for better interoperability
 
@@ -103,17 +68,8 @@ static esp_err_t sdcard_mount(void)
     };
 
     bool bus_initialized_here = false;
-    const bool cs_controlled_via_ch422g = ch422g_sdcard_cs_available();
-    bool cs_asserted_via_ch422g = false;
-
-    ESP_LOGI(TAG, "SDSPI config: host=%d, mosi=%d, miso=%d, sck=%d, cs=%d", host.slot,
-             CONFIG_SDCARD_SPI_MOSI_GPIO, CONFIG_SDCARD_SPI_MISO_GPIO, CONFIG_SDCARD_SPI_SCK_GPIO,
-             cs_controlled_via_ch422g ? -1 : CONFIG_SDCARD_SPI_CS_GPIO);
-
-    if (cs_controlled_via_ch422g)
-    {
-        ESP_LOGI(TAG, "SD CS controlled via CH422G EXIO4 (not a direct GPIO); make sure it is driven low during transactions");
-    }
+    ESP_LOGI(TAG, "SDSPI config (CH422G CS): host=%d, mosi=%d, miso=%d, sck=%d", host.slot,
+             CONFIG_SDCARD_SPI_MOSI_GPIO, CONFIG_SDCARD_SPI_MISO_GPIO, CONFIG_SDCARD_SPI_SCK_GPIO);
 
     esp_err_t err = spi_bus_initialize(host.slot, &bus_config, SDSPI_DEFAULT_DMA);
     if (err == ESP_ERR_INVALID_STATE)
@@ -142,17 +98,7 @@ static esp_err_t sdcard_mount(void)
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_config.host_id = host.slot;
 
-    if (cs_controlled_via_ch422g)
-    {
-        ESP_LOGI(TAG, "Driving SD CS low via CH422G EXIO4 before SDSPI mount");
-        sdcard_cs_assert_via_ch422g();
-        slot_config.gpio_cs = -1; // No direct GPIO CS when controlled via IO extension
-        cs_asserted_via_ch422g = true;
-    }
-    else
-    {
-        slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
-    }
+    slot_config.gpio_cs = -1; // CS handled by CH422G inside custom SDSPI host
 
     err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
 
@@ -183,10 +129,6 @@ static esp_err_t sdcard_mount(void)
         {
             spi_bus_free(host.slot);
         }
-        if (cs_asserted_via_ch422g)
-        {
-            sdcard_cs_deassert_via_ch422g();
-        }
         return err;
     }
 
@@ -194,7 +136,7 @@ static esp_err_t sdcard_mount(void)
     s_mounted = true;
 
     sdmmc_card_print_info(stdout, card);
-    ESP_LOGI(TAG, "Mounted %s successfully", SDCARD_MOUNT_POINT);
+    ESP_LOGI(TAG, "microSD mounted OK on %s", SDCARD_MOUNT_POINT);
     return ESP_OK;
 }
 
