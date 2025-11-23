@@ -22,6 +22,12 @@
 #ifndef CONFIG_SDCARD_SPI_SCK_GPIO
 #define CONFIG_SDCARD_SPI_SCK_GPIO   GPIO_NUM_12  // Fallback wiring if IO extension unavailable
 #endif
+#ifndef CONFIG_SDCARD_SPI_HOST
+#define CONFIG_SDCARD_SPI_HOST       SPI3_HOST    // Default to VSPI on ESP32-S3
+#endif
+#ifndef CONFIG_SDCARD_MAX_FILES
+#define CONFIG_SDCARD_MAX_FILES      5            // Conservative default if Kconfig entry is absent
+#endif
 
 // Waveshare ESP32-S3 Touch LCD 7B µSD wiring (SPI via CH422G):
 // MOSI = GPIO11, MISO = GPIO13, SCK = GPIO12, CS = EXIO4 (active low)
@@ -35,7 +41,7 @@ static sdmmc_card_t *s_card = NULL;
 
 static bool sdcard_no_media_error(esp_err_t err)
 {
-    return (err == ESP_ERR_NOT_FOUND);
+    return (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_RESPONSE);
 }
 
 static esp_err_t sdcard_mount(void)
@@ -46,7 +52,7 @@ static esp_err_t sdcard_mount(void)
     }
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = SPI3_HOST;              // ESP32-S3: SPI3 (VSPI) disponible pour le slot µSD.
+    host.slot = CONFIG_SDCARD_SPI_HOST; // ESP32-S3: SPI3 (VSPI) disponible pour le slot µSD.
     host.max_freq_khz = 10000;          // Debug-friendly frequency for better interoperability
 
     spi_bus_config_t bus_config = {
@@ -55,10 +61,11 @@ static esp_err_t sdcard_mount(void)
         .sclk_io_num = CONFIG_SDCARD_SPI_SCK_GPIO,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = 4000,
+        .max_transfer_sz = 4096,
     };
 
     bool bus_initialized_here = false;
+    bool cs_forced_high = false;
     esp_err_t err = spi_bus_initialize(host.slot, &bus_config, SDSPI_DEFAULT_DMA);
     if (err == ESP_ERR_INVALID_STATE)
     {
@@ -76,14 +83,15 @@ static esp_err_t sdcard_mount(void)
 
     sdmmc_card_t *card = NULL;
 
-    const esp_vfs_fat_mount_config_t mount_config = {
+    const esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
-        .max_files = 5,
+        .max_files = CONFIG_SDCARD_MAX_FILES,
         .allocation_unit_size = 16 * 1024,
         .disk_status_check_enable = true,
     };
 
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_config.host_id = host.slot;
 
     // CS is routed through CH422G EXIO4. Keep it permanently asserted (active low)
     // so the dedicated SPI device remains selected; the SDSPI driver will still
@@ -95,22 +103,25 @@ static esp_err_t sdcard_mount(void)
         {
             ESP_LOGW(TAG, "Unable to assert SD CS via IO extension (%s), continuing", esp_err_to_name(ch_err));
         }
+        else
+        {
+            cs_forced_high = true;
+        }
     }
 
     slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
-    slot_config.host_id = host.slot;
 
     err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
 
     if (err != ESP_OK)
     {
-        if (err == ESP_ERR_TIMEOUT)
-        {
-            ESP_LOGW(TAG, "microSD present but init timed out (ESP_ERR_TIMEOUT); continuing without storage");
-        }
-        else if (sdcard_no_media_error(err))
+        if (sdcard_no_media_error(err))
         {
             ESP_LOGW(TAG, "No SD card detected on %s; continuing without storage", SDCARD_MOUNT_POINT);
+        }
+        else if (err == ESP_ERR_TIMEOUT)
+        {
+            ESP_LOGW(TAG, "microSD present but init failed (%s); continuing without storage", esp_err_to_name(err));
         }
         else
         {
@@ -119,6 +130,10 @@ static esp_err_t sdcard_mount(void)
         if (bus_initialized_here)
         {
             spi_bus_free(host.slot);
+        }
+        if (cs_forced_high)
+        {
+            ch422g_set_sdcard_cs(false);
         }
         return err;
     }
