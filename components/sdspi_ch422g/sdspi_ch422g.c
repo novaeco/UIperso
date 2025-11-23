@@ -17,6 +17,7 @@
 #include <stddef.h>
 #include <sys/param.h>
 #include "esp_log.h"
+#include "esp_idf_version.h"
 #include "esp_heap_caps.h"
 #include "sys/lock.h"
 #include "driver/gpio.h"
@@ -32,6 +33,22 @@
 
 #include "ch422g.h"
 #include "sdspi_ch422g.h"
+
+
+// Compatibilité API ESP-IDF 6.x : sdspi_slot_config_t a été supprimé,
+// on le redéfinit localement pour ce driver custom.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+typedef struct {
+    gpio_num_t gpio_cs;    // CS signal
+    gpio_num_t gpio_cd;    // Card Detect
+    gpio_num_t gpio_wp;    // Write Protect
+    gpio_num_t gpio_int;   // SDIO interrupt line
+    gpio_num_t gpio_miso;  // MISO signal
+    gpio_num_t gpio_mosi;  // MOSI signal
+    gpio_num_t gpio_sck;   // SCK signal
+    int        dma_channel;
+} sdspi_slot_config_t;
+#endif
 
 
 /// Max number of transactions in flight (used in start_command_write_blocks)
