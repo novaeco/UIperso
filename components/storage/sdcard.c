@@ -23,7 +23,7 @@
 #define CONFIG_SDCARD_SPI_SCK_GPIO   GPIO_NUM_12  // Fallback wiring if IO extension unavailable
 #endif
 #ifndef CONFIG_SDCARD_SPI_HOST
-#define CONFIG_SDCARD_SPI_HOST       SPI3_HOST    // Default to VSPI on ESP32-S3
+#define CONFIG_SDCARD_SPI_HOST       SPI2_HOST    // Default to FSPI on ESP32-S3 (host=2)
 #endif
 #ifndef CONFIG_SDCARD_MAX_FILES
 #define CONFIG_SDCARD_MAX_FILES      5            // Conservative default if Kconfig entry is absent
@@ -39,6 +39,44 @@ static const char *TAG = "SDCARD";
 static bool s_mounted = false;
 static sdmmc_card_t *s_card = NULL;
 
+static void sdcard_cs_assert_via_ch422g(void)
+{
+    if (!ch422g_sdcard_cs_available())
+    {
+        ESP_LOGW(TAG, "Cannot assert SD CS via CH422G: IO extension unavailable");
+        return;
+    }
+
+    esp_err_t err = ch422g_set_sdcard_cs(true);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to drive SD CS low via CH422G EXIO4 (%s)", esp_err_to_name(err));
+    }
+    else
+    {
+        ESP_LOGI(TAG, "CH422G EXIO4 driven low (SD CS asserted)");
+    }
+}
+
+static void sdcard_cs_deassert_via_ch422g(void)
+{
+    if (!ch422g_sdcard_cs_available())
+    {
+        ESP_LOGW(TAG, "Cannot release SD CS via CH422G: IO extension unavailable");
+        return;
+    }
+
+    esp_err_t err = ch422g_set_sdcard_cs(false);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to release SD CS via CH422G EXIO4 (%s)", esp_err_to_name(err));
+    }
+    else
+    {
+        ESP_LOGI(TAG, "CH422G EXIO4 released high (SD CS deasserted)");
+    }
+}
+
 static bool sdcard_no_media_error(esp_err_t err)
 {
     return (err == ESP_ERR_NOT_FOUND);
@@ -52,7 +90,7 @@ static esp_err_t sdcard_mount(void)
     }
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = CONFIG_SDCARD_SPI_HOST; // ESP32-S3: SPI3 (VSPI) disponible pour le slot µSD.
+    host.slot = CONFIG_SDCARD_SPI_HOST; // ESP32-S3: SPI2 (FSPI) disponible pour le slot µSD.
     host.max_freq_khz = 10000;          // Debug-friendly frequency for better interoperability
 
     spi_bus_config_t bus_config = {
@@ -65,13 +103,14 @@ static esp_err_t sdcard_mount(void)
     };
 
     bool bus_initialized_here = false;
-    bool cs_forced_high = false;
+    const bool cs_controlled_via_ch422g = ch422g_sdcard_cs_available();
+    bool cs_asserted_via_ch422g = false;
 
     ESP_LOGI(TAG, "SDSPI config: host=%d, mosi=%d, miso=%d, sck=%d, cs=%d", host.slot,
              CONFIG_SDCARD_SPI_MOSI_GPIO, CONFIG_SDCARD_SPI_MISO_GPIO, CONFIG_SDCARD_SPI_SCK_GPIO,
-             ch422g_sdcard_cs_available() ? -1 : CONFIG_SDCARD_SPI_CS_GPIO);
+             cs_controlled_via_ch422g ? -1 : CONFIG_SDCARD_SPI_CS_GPIO);
 
-    if (ch422g_sdcard_cs_available())
+    if (cs_controlled_via_ch422g)
     {
         ESP_LOGI(TAG, "SD CS controlled via CH422G EXIO4 (not a direct GPIO); make sure it is driven low during transactions");
     }
@@ -103,23 +142,17 @@ static esp_err_t sdcard_mount(void)
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_config.host_id = host.slot;
 
-    // CS is routed through CH422G EXIO4. Keep it permanently asserted (active low)
-    // so the dedicated SPI device remains selected; the SDSPI driver will still
-    // use the configured chip-select GPIO for standard wiring scenarios.
-    if (ch422g_sdcard_cs_available())
+    if (cs_controlled_via_ch422g)
     {
-        esp_err_t ch_err = ch422g_set_sdcard_cs(true);
-        if (ch_err != ESP_OK)
-        {
-            ESP_LOGW(TAG, "Unable to assert SD CS via IO extension (%s), continuing", esp_err_to_name(ch_err));
-        }
-        else
-        {
-            cs_forced_high = true;
-        }
+        ESP_LOGI(TAG, "Driving SD CS low via CH422G EXIO4 before SDSPI mount");
+        sdcard_cs_assert_via_ch422g();
+        slot_config.gpio_cs = -1; // No direct GPIO CS when controlled via IO extension
+        cs_asserted_via_ch422g = true;
     }
-
-    slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
+    else
+    {
+        slot_config.gpio_cs = CONFIG_SDCARD_SPI_CS_GPIO;
+    }
 
     err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
 
@@ -150,9 +183,9 @@ static esp_err_t sdcard_mount(void)
         {
             spi_bus_free(host.slot);
         }
-        if (cs_forced_high)
+        if (cs_asserted_via_ch422g)
         {
-            ch422g_set_sdcard_cs(false);
+            sdcard_cs_deassert_via_ch422g();
         }
         return err;
     }
