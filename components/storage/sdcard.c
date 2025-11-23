@@ -41,7 +41,7 @@ static sdmmc_card_t *s_card = NULL;
 
 static bool sdcard_no_media_error(esp_err_t err)
 {
-    return (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_RESPONSE);
+    return (err == ESP_ERR_NOT_FOUND);
 }
 
 static esp_err_t sdcard_mount(void)
@@ -66,6 +66,16 @@ static esp_err_t sdcard_mount(void)
 
     bool bus_initialized_here = false;
     bool cs_forced_high = false;
+
+    ESP_LOGI(TAG, "SDSPI config: host=%d, mosi=%d, miso=%d, sck=%d, cs=%d", host.slot,
+             CONFIG_SDCARD_SPI_MOSI_GPIO, CONFIG_SDCARD_SPI_MISO_GPIO, CONFIG_SDCARD_SPI_SCK_GPIO,
+             ch422g_sdcard_cs_available() ? -1 : CONFIG_SDCARD_SPI_CS_GPIO);
+
+    if (ch422g_sdcard_cs_available())
+    {
+        ESP_LOGI(TAG, "SD CS controlled via CH422G EXIO4 (not a direct GPIO); make sure it is driven low during transactions");
+    }
+
     esp_err_t err = spi_bus_initialize(host.slot, &bus_config, SDSPI_DEFAULT_DMA);
     if (err == ESP_ERR_INVALID_STATE)
     {
@@ -115,13 +125,22 @@ static esp_err_t sdcard_mount(void)
 
     if (err != ESP_OK)
     {
+        ESP_LOGW(TAG, "esp_vfs_fat_sdspi_mount failed: %s", esp_err_to_name(err));
+    }
+
+    if (err != ESP_OK)
+    {
         if (sdcard_no_media_error(err))
         {
             ESP_LOGW(TAG, "No SD card detected on %s; continuing without storage", SDCARD_MOUNT_POINT);
         }
         else if (err == ESP_ERR_TIMEOUT)
         {
-            ESP_LOGW(TAG, "microSD present but init failed (%s); continuing without storage", esp_err_to_name(err));
+            ESP_LOGW(TAG, "microSD init timed out (%s); card may be missing or not responding; continuing without storage", esp_err_to_name(err));
+        }
+        else if (err == ESP_ERR_INVALID_RESPONSE || err == ESP_FAIL)
+        {
+            ESP_LOGW(TAG, "microSD init failed, card not responding correctly (%s); continuing without storage", esp_err_to_name(err));
         }
         else
         {
