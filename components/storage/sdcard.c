@@ -14,6 +14,7 @@
 #include "sdmmc_cmd.h"
 
 #include "ch422g.h"
+#include "sdspi_ch422g.h"
 
 // Waveshare ESP32-S3 Touch LCD 7B: microSD over SPI with CS on CH422G EXIO4.
 // CS is driven manually through the IO expander; the VFS layer sees a "dummy" CS GPIO.
@@ -81,8 +82,8 @@ static esp_err_t sdcard_mount(void)
     ESP_RETURN_ON_ERROR(ch422g_set_sdcard_cs(true), TAG, "Failed to assert SD CS via CH422G");
     vTaskDelay(pdMS_TO_TICKS(5));
 
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = CONFIG_SDCARD_SPI_HOST; // ESP32-S3: SPI2 (FSPI) disponible pour le slot µSD.
+    sdmmc_host_t host = sdspi_host_ch422g_default();
+    host.slot = CONFIG_SDCARD_SPI_HOST; // SPI2_HOST expected
     host.max_freq_khz = 20000;          // Conservative 20 MHz for stable bring-up
 
     spi_bus_config_t bus_config = {
@@ -91,7 +92,7 @@ static esp_err_t sdcard_mount(void)
         .sclk_io_num = CONFIG_SDCARD_SPI_SCK_GPIO,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = 4096,
+        .max_transfer_sz = 4000,
     };
 
     bool bus_initialized_here = false;
@@ -162,6 +163,9 @@ static esp_err_t sdcard_mount(void)
 
     s_card = card;
     s_mounted = true;
+
+    // Release CS after successful negotiation; runtime transactions toggle CS through the custom host.
+    ch422g_set_sdcard_cs(false);
 
     sdmmc_card_print_info(stdout, card);
     ESP_LOGI(TAG, "microSD mounted OK on %s", SDCARD_MOUNT_POINT);
