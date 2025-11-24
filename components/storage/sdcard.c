@@ -6,15 +6,17 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/sdspi_host.h"
 #include "driver/spi_common.h"
 #include "sdmmc_cmd.h"
 
-#include "sdspi_ch422g.h"
+#include "ch422g.h"
 
 // Waveshare ESP32-S3 Touch LCD 7B: microSD over SPI with CS on CH422G EXIO4.
-// The custom SDSPI host drives CS via the IO expander while keeping esp_vfs_fat_sdspi_mount API.
+// CS is driven manually through the IO expander; the VFS layer sees a "dummy" CS GPIO.
 
 #ifndef CONFIG_SDCARD_SPI_MOSI_GPIO
 #define CONFIG_SDCARD_SPI_MOSI_GPIO  GPIO_NUM_11  // Fallback wiring if IO extension unavailable
@@ -31,6 +33,10 @@
 #ifndef CONFIG_SDCARD_MAX_FILES
 #define CONFIG_SDCARD_MAX_FILES      5            // Conservative default if Kconfig entry is absent
 #endif
+
+// Dummy CS pin required by esp_vfs_fat_sdspi_mount, not connected on hardware.
+// GPIO33 is free on the Waveshare ESP32-S3 Touch LCD 7B and can be driven safely.
+#define SDCARD_DUMMY_CS_GPIO GPIO_NUM_33
 
 // Waveshare ESP32-S3 Touch LCD 7B µSD wiring (SPI via CH422G):
 // MOSI = GPIO11, MISO = GPIO13, SCK = GPIO12, CS = EXIO4 (active low)
@@ -54,9 +60,30 @@ static esp_err_t sdcard_mount(void)
         return ESP_OK;
     }
 
-    sdmmc_host_t host = sdspi_host_ch422g_default();
+    if (!ch422g_sdcard_cs_available())
+    {
+        ESP_LOGE(TAG, "CH422G not ready; cannot drive SD CS (EXIO4)");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Configure the dummy CS GPIO to satisfy the SDSPI API; it is not wired to the card.
+    const gpio_config_t dummy_cs_cfg = {
+        .pin_bit_mask = 1ULL << SDCARD_DUMMY_CS_GPIO,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_RETURN_ON_ERROR(gpio_config(&dummy_cs_cfg), TAG, "Failed to init dummy CS GPIO");
+    ESP_RETURN_ON_ERROR(gpio_set_level(SDCARD_DUMMY_CS_GPIO, 1), TAG, "Failed to set dummy CS high");
+
+    // Force the real CS low via CH422G before probing the card.
+    ESP_RETURN_ON_ERROR(ch422g_set_sdcard_cs(true), TAG, "Failed to assert SD CS via CH422G");
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = CONFIG_SDCARD_SPI_HOST; // ESP32-S3: SPI2 (FSPI) disponible pour le slot µSD.
-    host.max_freq_khz = 10000;          // Debug-friendly frequency for better interoperability
+    host.max_freq_khz = 20000;          // Conservative 20 MHz for stable bring-up
 
     spi_bus_config_t bus_config = {
         .mosi_io_num = CONFIG_SDCARD_SPI_MOSI_GPIO,
@@ -68,8 +95,9 @@ static esp_err_t sdcard_mount(void)
     };
 
     bool bus_initialized_here = false;
-    ESP_LOGI(TAG, "SDSPI config (CH422G CS): host=%d, mosi=%d, miso=%d, sck=%d", host.slot,
-             CONFIG_SDCARD_SPI_MOSI_GPIO, CONFIG_SDCARD_SPI_MISO_GPIO, CONFIG_SDCARD_SPI_SCK_GPIO);
+    ESP_LOGI(TAG, "SDSPI config (CH422G CS): host=%d, mosi=%d, miso=%d, sck=%d, exio_cs=EXIO4, dummy_cs=%d",
+             host.slot, CONFIG_SDCARD_SPI_MOSI_GPIO, CONFIG_SDCARD_SPI_MISO_GPIO, CONFIG_SDCARD_SPI_SCK_GPIO,
+             SDCARD_DUMMY_CS_GPIO);
 
     esp_err_t err = spi_bus_initialize(host.slot, &bus_config, SDSPI_DEFAULT_DMA);
     if (err == ESP_ERR_INVALID_STATE)
@@ -97,8 +125,7 @@ static esp_err_t sdcard_mount(void)
 
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_config.host_id = host.slot;
-
-    slot_config.gpio_cs = -1; // CS handled by CH422G inside custom SDSPI host
+    slot_config.gpio_cs = SDCARD_DUMMY_CS_GPIO; // satisfies the API; real CS is EXIO4 via CH422G
 
     err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &slot_config, &mount_config, &card);
 
@@ -125,6 +152,7 @@ static esp_err_t sdcard_mount(void)
         {
             ESP_LOGE(TAG, "Failed to mount %s (%s)", SDCARD_MOUNT_POINT, esp_err_to_name(err));
         }
+        ch422g_set_sdcard_cs(false);
         if (bus_initialized_here)
         {
             spi_bus_free(host.slot);
