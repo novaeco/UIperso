@@ -17,9 +17,12 @@
 // Bitfield mapping for the external IO expander (EXIO1..EXIO8 -> bit0..bit7)
 #define EXIO1_BIT                  (1U << 0)    // TP_RST (active low)
 #define EXIO2_BIT                  (1U << 1)    // DISP / backlight enable
+#define EXIO3_BIT                  (1U << 2)
 #define EXIO4_BIT                  (1U << 3)    // SD_CS (active low)
 #define EXIO5_BIT                  (1U << 4)    // USB_SEL / CAN_SEL (high = USB)
 #define EXIO6_BIT                  (1U << 5)    // LCD_VDD_EN
+#define EXIO7_BIT                  (1U << 6)
+#define EXIO8_BIT                  (1U << 7)
 
 static const char *TAG = "CH422G";
 
@@ -100,6 +103,11 @@ static esp_err_t ch422g_set_output_bit(uint8_t bit_mask, bool high)
     return err;
 }
 
+esp_err_t ch422g_set_exio_level(uint8_t bit_mask, bool high)
+{
+    return ch422g_set_output_bit(bit_mask, high);
+}
+
 esp_err_t ch422g_init(void)
 {
     if (s_ctx.initialized)
@@ -169,7 +177,14 @@ esp_err_t ch422g_set_sdcard_cs(bool asserted)
 {
     // EXIO4 is active low: asserted => drive low
     esp_err_t err = ch422g_set_output_bit(EXIO4_BIT, !asserted);
-    ESP_LOGD(TAG, "SD CS %s (EXIO4)", asserted ? "LOW" : "HIGH");
+    if (err == ESP_OK)
+    {
+        ESP_LOGD(TAG, "SD CS %s (EXIO4), outputs=0x%02X", asserted ? "LOW" : "HIGH", s_ctx.outputs);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Failed to drive SD CS (EXIO4): %s", esp_err_to_name(err));
+    }
     return err;
 }
 

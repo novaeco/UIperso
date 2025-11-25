@@ -6,11 +6,13 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
+#include "esp_log_buffer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/sdspi_host.h"
 #include "driver/spi_common.h"
 #include "sdmmc_cmd.h"
+#include "esp_rom_sys.h"
 
 #include "ch422g.h"
 #include "sdspi_ch422g.h"
@@ -46,6 +48,11 @@ static const char *TAG = "SDCARD";
 
 static bool s_mounted = false;
 static sdmmc_card_t *s_card = NULL;
+
+static esp_err_t sdspi_diag_cmd0(spi_host_device_t host);
+#if CONFIG_SDSPI_DIAG_EXIO_SCAN
+static void sdspi_diag_exio_scan(spi_host_device_t host);
+#endif
 
 static bool sdcard_no_media_error(esp_err_t err)
 {
@@ -122,6 +129,11 @@ static esp_err_t sdcard_mount(void)
     ESP_LOGI(TAG, "esp_vfs_fat_sdspi_mount result=%s", esp_err_to_name(err));
 
     if (err != ESP_OK) {
+        // Run diagnostic before cleanup to keep the SPI bus available.
+        (void)sdspi_diag_cmd0(CONFIG_SDCARD_SPI_HOST);
+#if CONFIG_SDSPI_DIAG_EXIO_SCAN
+        sdspi_diag_exio_scan(CONFIG_SDCARD_SPI_HOST);
+#endif
         if (sdcard_no_media_error(err)) {
             ESP_LOGW(TAG, "No SD card detected on %s; continuing without storage", SDCARD_MOUNT_POINT);
         } else if (err == ESP_ERR_TIMEOUT) {
@@ -210,3 +222,178 @@ esp_err_t sdcard_test_file(void)
     ESP_LOGI(TAG, "sdcard_test_file succeeded (%s)", test_path);
     return ESP_OK;
 }
+
+static esp_err_t sdspi_diag_cmd0(spi_host_device_t host)
+{
+    if (!ch422g_sdcard_cs_available()) {
+        ESP_LOGW(TAG, "CMD0 diag skipped: CH422G not available");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    spi_device_handle_t dev = NULL;
+    spi_device_interface_config_t devcfg = {
+        .clock_speed_hz = 400000, // 400 kHz during probe
+        .mode = 0,
+        .spics_io_num = GPIO_NUM_NC,
+        .queue_size = 1,
+    };
+
+    esp_err_t ret = spi_bus_add_device(host, &devcfg, &dev);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "CMD0 diag: spi_bus_add_device failed (%s)", esp_err_to_name(ret));
+        return ret;
+    }
+
+    uint8_t clocks[10];
+    memset(clocks, 0xff, sizeof(clocks));
+    spi_transaction_t t = {
+        .length = sizeof(clocks) * 8,
+        .tx_buffer = clocks,
+        .rx_buffer = clocks,
+    };
+
+    (void)ch422g_set_sdcard_cs(false);
+    ret = spi_device_polling_transmit(dev, &t);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "CMD0 diag: failed to send idle clocks (%s)", esp_err_to_name(ret));
+        goto cleanup;
+    }
+
+    // Issue CMD0 with CS asserted via CH422G.
+    (void)ch422g_set_sdcard_cs(true);
+    esp_rom_delay_us(12);
+
+    uint8_t cmd0[] = {0x40, 0x00, 0x00, 0x00, 0x00, 0x95};
+    uint8_t cmd0_rx[sizeof(cmd0)] = {0};
+    spi_transaction_t t_cmd0 = {
+        .length = sizeof(cmd0) * 8,
+        .tx_buffer = cmd0,
+        .rx_buffer = cmd0_rx,
+    };
+    ret = spi_device_polling_transmit(dev, &t_cmd0);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "CMD0 diag: failed to transmit CMD0 (%s)", esp_err_to_name(ret));
+        goto cleanup;
+    }
+
+    uint8_t rsp_tx[16];
+    memset(rsp_tx, 0xff, sizeof(rsp_tx));
+    uint8_t rsp_rx[sizeof(rsp_tx)] = {0};
+    spi_transaction_t t_rsp = {
+        .length = sizeof(rsp_tx) * 8,
+        .tx_buffer = rsp_tx,
+        .rx_buffer = rsp_rx,
+    };
+
+    ret = spi_device_polling_transmit(dev, &t_rsp);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "CMD0 diag: failed to read response (%s)", esp_err_to_name(ret));
+        goto cleanup;
+    }
+
+    int first_valid = -1;
+    for (size_t i = 0; i < sizeof(rsp_rx); ++i) {
+        if (rsp_rx[i] != 0xff) {
+            first_valid = (int)i;
+            break;
+        }
+    }
+
+    if (first_valid < 0) {
+        ESP_LOGE(TAG, "CMD0 diag: No response on MISO; probable CS/pin mapping/frequency issue");
+    } else {
+        ESP_LOGI(TAG, "CMD0 diag: first non-0xFF at byte %d => 0x%02X", first_valid, rsp_rx[first_valid]);
+    }
+
+    esp_log_buffer_hex(TAG, cmd0_rx, sizeof(cmd0_rx));
+    esp_log_buffer_hex(TAG, rsp_rx, sizeof(rsp_rx));
+
+cleanup:
+    (void)ch422g_set_sdcard_cs(false);
+    if (dev) {
+        spi_bus_remove_device(dev);
+    }
+    return ret;
+}
+
+#if CONFIG_SDSPI_DIAG_EXIO_SCAN
+static void sdspi_diag_exio_scan(spi_host_device_t host)
+{
+    static const uint8_t exio_bits[8] = {
+        1U << 0, 1U << 1, 1U << 2, 1U << 3,
+        1U << 4, 1U << 5, 1U << 6, 1U << 7,
+    };
+
+    ESP_LOGW(TAG, "EXIO scan enabled: probing alternative CS lines");
+
+    for (int idx = 0; idx < 8; ++idx) {
+        uint8_t mask = exio_bits[idx];
+
+        // Idle high
+        (void)ch422g_set_exio_level(mask, true);
+        esp_rom_delay_us(10);
+
+        spi_device_handle_t dev = NULL;
+        spi_device_interface_config_t devcfg = {
+            .clock_speed_hz = 400000,
+            .mode = 0,
+            .spics_io_num = GPIO_NUM_NC,
+            .queue_size = 1,
+        };
+
+        if (spi_bus_add_device(host, &devcfg, &dev) != ESP_OK) {
+            continue;
+        }
+
+        uint8_t idle[10];
+        memset(idle, 0xff, sizeof(idle));
+        spi_transaction_t t_idle = {
+            .length = sizeof(idle) * 8,
+            .tx_buffer = idle,
+            .rx_buffer = idle,
+        };
+        (void)spi_device_polling_transmit(dev, &t_idle);
+
+        (void)ch422g_set_exio_level(mask, false);
+        esp_rom_delay_us(12);
+
+        uint8_t cmd0[] = {0x40, 0x00, 0x00, 0x00, 0x00, 0x95};
+        uint8_t cmd0_rx[sizeof(cmd0)] = {0};
+        spi_transaction_t t_cmd0 = {
+            .length = sizeof(cmd0) * 8,
+            .tx_buffer = cmd0,
+            .rx_buffer = cmd0_rx,
+        };
+        (void)spi_device_polling_transmit(dev, &t_cmd0);
+
+        uint8_t rsp_tx[4];
+        uint8_t rsp_rx[sizeof(rsp_tx)] = {0};
+        memset(rsp_tx, 0xff, sizeof(rsp_tx));
+        spi_transaction_t t_rsp = {
+            .length = sizeof(rsp_tx) * 8,
+            .tx_buffer = rsp_tx,
+            .rx_buffer = rsp_rx,
+        };
+        (void)spi_device_polling_transmit(dev, &t_rsp);
+
+        bool detected = false;
+        for (size_t i = 0; i < sizeof(rsp_rx); ++i) {
+            if (rsp_rx[i] != 0xff) {
+                ESP_LOGW(TAG, "Detected SD CS on EXIO%d (R1=0x%02X)", idx + 1, rsp_rx[i]);
+                detected = true;
+                break;
+            }
+        }
+
+        spi_bus_remove_device(dev);
+        (void)ch422g_set_exio_level(mask, true);
+
+        if (detected) {
+            break;
+        }
+    }
+
+    // Restore intended CS (EXIO4) idle high
+    (void)ch422g_set_sdcard_cs(false);
+}
+#endif
