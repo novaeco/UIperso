@@ -40,6 +40,11 @@ esp_err_t ch422g_set_touch_reset(bool asserted);
 esp_err_t ch422g_select_usb(bool usb_selected);
 
 /**
+ * @brief Drive any EXIO line (bitmask for EXIO1..8) to logic high or low, preserving cached state of other lines.
+ */
+esp_err_t ch422g_set_exio_level(uint8_t bit_mask, bool high);
+
+/**
  * @brief Drive the µSD card chip-select. When @a asserted is true CS is driven active.
  */
 esp_err_t ch422g_set_sdcard_cs(bool asserted);

@@ -199,23 +199,27 @@ static slot_info_t* remove_slot_info(sdspi_dev_handle_t handle)
 }
 
 /// Set CS high for given slot using CH422G (EXIO4 is active low)
-static esp_err_t cs_high(slot_info_t *slot)
+static esp_err_t cs_set(slot_info_t *slot, bool asserted)
 {
     (void)slot;
-    esp_err_t err = ch422g_set_sdcard_cs(false);
-    ESP_LOGD(TAG, "CS -> HIGH (release), rc=%s", esp_err_to_name(err));
+    esp_err_t err = ch422g_set_sdcard_cs(asserted);
+    if (err == ESP_OK) {
+        ESP_LOGD(TAG, "CS -> %s", asserted ? "LOW (assert)" : "HIGH (release)");
+        // CS toggles through I2C → CH422G, give it a few microseconds to settle
+        esp_rom_delay_us(12);
+    }
     return err;
+}
+
+static esp_err_t cs_high(slot_info_t *slot)
+{
+    return cs_set(slot, false);
 }
 
 /// Set CS low for given slot using CH422G (EXIO4 is active low)
 static esp_err_t cs_low(slot_info_t *slot)
 {
-    (void)slot;
-    esp_err_t err = ch422g_set_sdcard_cs(true);
-    ESP_LOGD(TAG, "CS -> LOW (assert), rc=%s", esp_err_to_name(err));
-    // CS toggles through I2C → CH422G, give it a few microseconds to settle
-    esp_rom_delay_us(5);
-    return err;
+    return cs_set(slot, true);
 }
 
 static bool card_write_protected(slot_info_t *slot)

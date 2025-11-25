@@ -1,0 +1,12 @@
+menu "CH422G-controlled SDSPI"
+
+config SDSPI_DIAG_EXIO_SCAN
+    bool "Enable EXIO scan diagnostic for SD CS"
+    default n
+    help
+        When enabled, a diagnostic routine can temporarily probe EXIO0..EXIO7
+        as potential SD chip-select lines to detect miswired CS routing. This
+        is intended for bring-up only; keep disabled in production builds.
+
+endmenu
+
