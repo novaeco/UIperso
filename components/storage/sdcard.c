@@ -5,7 +5,7 @@
 
 #include "esp_check.h"
 #include "esp_log.h"
-#include "esp_log_buffer.h" // esp_log_buffer_hex
+#include "esp_log_buffer.h" // esp_log_buffer_hex lives here (not in esp_log.h on some IDF builds)
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
