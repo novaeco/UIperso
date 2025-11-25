@@ -257,7 +257,7 @@ static void release_bus(slot_info_t *slot)
     (void)spi_device_polling_transmit(slot->spi_handle, &t);
 }
 
-static void go_idle_clockout(slot_info_t *slot)
+static esp_err_t go_idle_clockout(slot_info_t *slot)
 {
     uint8_t data[12];
     memset(data, 0xff, sizeof(data));
@@ -266,7 +266,16 @@ static void go_idle_clockout(slot_info_t *slot)
         .tx_buffer = data,
         .rx_buffer = data,
     };
-    (void)spi_device_polling_transmit(slot->spi_handle, &t);
+
+    esp_err_t ret = spi_device_polling_transmit(slot->spi_handle, &t);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to send 80 clocks with CS high before CMD0 (%s)", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ESP_LOGD(TAG, "MISO during idle clocks (first 10 bytes)");
+    esp_log_buffer_hex(TAG, data, 10);
+    return ESP_OK;
 }
 
 static esp_err_t configure_spi_dev(slot_info_t *slot, int clock_speed_hz)
@@ -346,9 +355,10 @@ static esp_err_t deinit_slot(slot_info_t *slot)
     if (slot->spi_handle) {
         spi_bus_remove_device(slot->spi_handle);
         slot->spi_handle = NULL;
-        free(slot->block_buf);
-        slot->block_buf = NULL;
     }
+
+    free(slot->block_buf);
+    slot->block_buf = NULL;
 
     (void)cs_high(slot);
     free(slot);
@@ -457,21 +467,32 @@ esp_err_t sdspi_host_ch422g_start_command(sdspi_dev_handle_t handle, sdspi_hw_cm
     ESP_LOGV(TAG, "%s: slot=%i, CMD%d, arg=0x%08x flags=0x%x, data=%p, data_size=%i crc=0x%02x",
              __func__, handle, cmd_index, cmd_arg, flags, data, data_size, cmd->crc7);
 
-    // For CMD0, clock out 80 cycles with CS high before asserting CS and sending the command.
-    if (cmd_index == MMC_GO_IDLE_STATE) {
-        (void)cs_high(slot);
-        go_idle_clockout(slot);
+    esp_err_t ret = spi_device_acquire_bus(slot->spi_handle, portMAX_DELAY);
+    bool bus_acquired = (ret == ESP_OK);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to acquire SPI bus (%s)", esp_err_to_name(ret));
+        return ret;
     }
 
-    esp_err_t ret = ESP_OK;
+    // Ensure CS is released before any GO_IDLE clocking.
+    ret = cs_high(slot);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to release SD CS via CH422G (%s)", esp_err_to_name(ret));
+        goto cleanup;
+    }
 
-    spi_device_acquire_bus(slot->spi_handle, portMAX_DELAY);
+    // For CMD0, clock out 80 cycles with CS high before asserting CS and sending the command.
+    if (cmd_index == MMC_GO_IDLE_STATE) {
+        ret = go_idle_clockout(slot);
+        if (ret != ESP_OK) {
+            goto cleanup;
+        }
+    }
 
     ret = cs_low(slot);
     if (ret != ESP_OK) {
-        spi_device_release_bus(slot->spi_handle);
         ESP_LOGE(TAG, "Failed to assert SD CS via CH422G (%s)", esp_err_to_name(ret));
-        return ret;
+        goto cleanup;
     }
 
     if (flags & SDSPI_CMD_FLAG_DATA) {
@@ -486,14 +507,17 @@ esp_err_t sdspi_host_ch422g_start_command(sdspi_dev_handle_t handle, sdspi_hw_cm
         ret = start_command_default(slot, flags, cmd);
     }
 
-    esp_err_t cs_ret = cs_high(slot);
-    if (cs_ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to deassert SD CS via CH422G (%s)", esp_err_to_name(cs_ret));
-        ret = (ret == ESP_OK) ? cs_ret : ret;
-    }
+cleanup:
+    if (bus_acquired) {
+        esp_err_t cs_ret = cs_high(slot);
+        if (cs_ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to deassert SD CS via CH422G (%s)", esp_err_to_name(cs_ret));
+            ret = (ret == ESP_OK) ? cs_ret : ret;
+        }
 
-    release_bus(slot);
-    spi_device_release_bus(slot->spi_handle);
+        release_bus(slot);
+        spi_device_release_bus(slot->spi_handle);
+    }
 
     if (ret == ESP_OK) {
         if (cmd_index == SD_CRC_ON_OFF) {
