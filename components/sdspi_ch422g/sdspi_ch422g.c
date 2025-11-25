@@ -18,7 +18,7 @@
 #include <sys/param.h>
 
 #include "esp_log.h"
-#include "esp_log_buffer.h" // esp_log_buffer_hex
+#include "esp_log_buffer.h"
 #include "esp_idf_version.h"
 #include "esp_heap_caps.h"
 #include "sys/lock.h"
