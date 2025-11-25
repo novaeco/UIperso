@@ -13,7 +13,7 @@
 
 #define LCD_H_RES                  1024
 #define LCD_V_RES                  600
-#define LCD_PIXEL_CLOCK_HZ         (40 * 1000 * 1000) /* TODO: Validate exact clock with panel datasheet */
+#define LCD_PIXEL_CLOCK_HZ         51438720  /* 1024x600 @60 Hz with existing porch timings (1344*638*60) */
 
 #define LCD_HSYNC_PULSE_WIDTH      20
 #define LCD_HSYNC_BACK_PORCH       160

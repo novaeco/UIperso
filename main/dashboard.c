@@ -2,6 +2,8 @@
 
 #include <inttypes.h>
 
+#include <math.h>
+
 #include "esp_heap_caps.h"
 #include "esp_system.h"
 
@@ -77,21 +79,28 @@ static void dashboard_update_cb(lv_timer_t *timer)
         psram_load_percent = clamp_u32(100 - (uint32_t)((psram_free * 100U) / psram_baseline), 0, 100);
     }
 
-    float battery_voltage = cs8501_get_battery_voltage();
-    float battery_ratio = (battery_voltage - 3.3f) / (4.2f - 3.3f);
-    if (battery_ratio < 0.0f)
+    uint32_t battery_percent = 0;
+    if (cs8501_has_voltage_reading())
     {
-        battery_ratio = 0.0f;
-    }
-    if (battery_ratio > 1.0f)
-    {
-        battery_ratio = 1.0f;
-    }
-    uint32_t battery_percent = (uint32_t)(battery_ratio * 100.0f);
+        float battery_voltage = cs8501_get_battery_voltage();
+        if (!isnan(battery_voltage))
+        {
+            float battery_ratio = (battery_voltage - 3.3f) / (4.2f - 3.3f);
+            if (battery_ratio < 0.0f)
+            {
+                battery_ratio = 0.0f;
+            }
+            if (battery_ratio > 1.0f)
+            {
+                battery_ratio = 1.0f;
+            }
+            battery_percent = (uint32_t)(battery_ratio * 100.0f);
 
-    if (cs8501_is_charging())
-    {
-        battery_percent = clamp_u32(battery_percent + 5U, 0, 100);
+            if (cs8501_has_charge_status() && cs8501_is_charging())
+            {
+                battery_percent = clamp_u32(battery_percent + 5U, 0, 100);
+            }
+        }
     }
 
     uint32_t sample = (heap_load_percent + psram_load_percent + battery_percent) / 3U;

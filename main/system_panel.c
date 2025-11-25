@@ -9,12 +9,16 @@
 #include "lv_theme_custom.h"
 #include "sdcard.h"
 
+#include <math.h>
+#include <stdbool.h>
+
 #define SYSTEM_REFRESH_PERIOD_MS 1500
 
 static const char *TAG = "system_panel";
 
 static lv_obj_t *sd_status_label = NULL;
 static lv_obj_t *brightness_value_label = NULL;
+static lv_obj_t *brightness_switch = NULL;
 static lv_obj_t *battery_label = NULL;
 static lv_obj_t *charge_label = NULL;
 static lv_timer_t *system_timer = NULL;
@@ -24,7 +28,7 @@ static void apply_backlight_level(uint8_t percent)
     percent = percent > 100 ? 100 : percent;
     if (brightness_value_label)
     {
-        lv_label_set_text_fmt(brightness_value_label, "%u %%", percent);
+        lv_label_set_text_fmt(brightness_value_label, "%s", percent < 5 ? "Éteint" : "Allumé");
     }
 
     if (percent < 5)
@@ -36,7 +40,7 @@ static void apply_backlight_level(uint8_t percent)
         ch422g_set_backlight(true);
     }
 
-    ESP_LOGI(TAG, "Luminosité (stub) : %u%%", percent);
+    ESP_LOGI(TAG, "Rétroéclairage binaire : %s", percent < 5 ? "OFF" : "ON");
 }
 
 static void brightness_slider_event_cb(lv_event_t *e)
@@ -45,9 +49,13 @@ static void brightness_slider_event_cb(lv_event_t *e)
     {
         return;
     }
-    lv_obj_t *slider = lv_event_get_target(e);
-    uint8_t value = (uint8_t)lv_slider_get_value(slider);
-    apply_backlight_level(value);
+    if (!brightness_switch)
+    {
+        return;
+    }
+
+    bool on = lv_obj_has_state(brightness_switch, LV_STATE_CHECKED);
+    apply_backlight_level(on ? 100 : 0);
 }
 
 static void sd_test_button_event_cb(lv_event_t *e)
@@ -85,12 +93,26 @@ static void refresh_system_info(lv_timer_t *timer)
     if (battery_label)
     {
         float voltage = cs8501_get_battery_voltage();
-        lv_label_set_text_fmt(battery_label, "Batterie : %.2f V", voltage);
+        if (cs8501_has_voltage_reading() && !isnan(voltage))
+        {
+            lv_label_set_text_fmt(battery_label, "Batterie : %.2f V", voltage);
+        }
+        else
+        {
+            lv_label_set_text(battery_label, "Batterie : N/A");
+        }
     }
 
     if (charge_label)
     {
-        lv_label_set_text_fmt(charge_label, "Charge : %s", cs8501_is_charging() ? "en cours" : "inactive");
+        if (cs8501_has_charge_status())
+        {
+            lv_label_set_text_fmt(charge_label, "Charge : %s", cs8501_is_charging() ? "en cours" : "inactive");
+        }
+        else
+        {
+            lv_label_set_text(charge_label, "Charge : inconnue");
+        }
     }
 }
 
@@ -128,13 +150,12 @@ lv_obj_t *system_panel_create(void)
     lv_obj_set_style_text_font(title, &lv_font_montserrat_24, LV_PART_MAIN);
 
     lv_obj_t *screen_section = create_section(screen, "Écran");
-    lv_obj_t *slider = lv_slider_create(screen_section);
-    lv_slider_set_range(slider, 0, 100);
-    lv_slider_set_value(slider, 80, LV_ANIM_OFF);
-    lv_obj_add_event_cb(slider, brightness_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    brightness_switch = lv_switch_create(screen_section);
+    lv_obj_add_event_cb(brightness_switch, brightness_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_state(brightness_switch, LV_STATE_CHECKED);
     brightness_value_label = lv_label_create(screen_section);
     lv_obj_add_style(brightness_value_label, lv_theme_custom_style_label(), LV_PART_MAIN);
-    lv_label_set_text(brightness_value_label, "80 %");
+    lv_label_set_text(brightness_value_label, "Allumé");
 
     lv_obj_t *storage_section = create_section(screen, "Stockage");
     sd_status_label = lv_label_create(storage_section);
