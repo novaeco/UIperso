@@ -5,6 +5,7 @@
 
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_log_buffer.h"
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
