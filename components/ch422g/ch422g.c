@@ -3,6 +3,7 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include "i2c_bus_shared.h"
@@ -28,6 +29,7 @@ static struct
     bool io_ready;
     uint8_t outputs;
     i2c_master_dev_handle_t dev;
+    SemaphoreHandle_t lock;
 } s_ctx;
 
 static esp_err_t ch422g_write_outputs(void)
@@ -74,6 +76,11 @@ static esp_err_t ch422g_set_output_bit(uint8_t bit_mask, bool high)
         return ESP_ERR_NOT_SUPPORTED;
     }
 
+    if (s_ctx.lock)
+    {
+        xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
+    }
+
     if (high)
     {
         s_ctx.outputs |= bit_mask;
@@ -83,7 +90,14 @@ static esp_err_t ch422g_set_output_bit(uint8_t bit_mask, bool high)
         s_ctx.outputs &= (uint8_t)~bit_mask;
     }
 
-    return ch422g_write_outputs();
+    esp_err_t err = ch422g_write_outputs();
+
+    if (s_ctx.lock)
+    {
+        xSemaphoreGive(s_ctx.lock);
+    }
+
+    return err;
 }
 
 esp_err_t ch422g_init(void)
@@ -97,6 +111,15 @@ esp_err_t ch422g_init(void)
 
     ESP_RETURN_ON_ERROR(i2c_bus_shared_add_device(IOEXT_I2C_ADDRESS, i2c_bus_shared_default_speed_hz(), &s_ctx.dev), TAG, "Failed to add CH422G to shared bus");
     s_ctx.io_ready = true;
+
+    if (!s_ctx.lock)
+    {
+        s_ctx.lock = xSemaphoreCreateMutex();
+        if (s_ctx.lock == NULL)
+        {
+            return ESP_ERR_NO_MEM;
+        }
+    }
 
     // The CH32V003 acting as IO expander may still be booting when the bus is ready.
     // Give it a few milliseconds before the first transaction to avoid transient NACKs.
@@ -145,7 +168,9 @@ esp_err_t ch422g_select_usb(bool usb_selected)
 esp_err_t ch422g_set_sdcard_cs(bool asserted)
 {
     // EXIO4 is active low: asserted => drive low
-    return ch422g_set_output_bit(EXIO4_BIT, !asserted);
+    esp_err_t err = ch422g_set_output_bit(EXIO4_BIT, !asserted);
+    ESP_LOGD(TAG, "SD CS %s (EXIO4)", asserted ? "LOW" : "HIGH");
+    return err;
 }
 
 bool ch422g_sdcard_cs_available(void)

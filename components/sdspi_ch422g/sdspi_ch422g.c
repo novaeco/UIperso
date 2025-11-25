@@ -146,10 +146,10 @@ static void r1_sdio_response_to_err(uint8_t r1, int cmd, esp_err_t *out_err)
         *out_err = ESP_ERR_NOT_SUPPORTED;
     } else if (r1 & SD_SPI_R1_PARAM_ERR) {
         ESP_LOGI(TAG, "cmd=%d, R1 response: size error", cmd);
-        *out_err = ESP_ERR_INVALID_SIZE;
+        *out_err = ESP_ERR_NOT_SUPPORTED;
     } else if (r1 & SDIO_R1_FUNC_NUM_ERR) {
         ESP_LOGI(TAG, "cmd=%d, R1 response: function number error", cmd);
-        *out_err = ESP_ERR_INVALID_ARG;
+        *out_err = ESP_ERR_NOT_SUPPORTED;
     } else if (r1 & SD_SPI_R1_IDLE_STATE) {
         // Idle state is handled at command layer
     } else if (r1 != 0) {
@@ -201,14 +201,18 @@ static slot_info_t* remove_slot_info(sdspi_dev_handle_t handle)
 static esp_err_t cs_high(slot_info_t *slot)
 {
     (void)slot;
-    return ch422g_set_sdcard_cs(false);
+    esp_err_t err = ch422g_set_sdcard_cs(false);
+    ESP_LOGD(TAG, "CS -> HIGH (release), rc=%s", esp_err_to_name(err));
+    return err;
 }
 
 /// Set CS low for given slot using CH422G (EXIO4 is active low)
 static esp_err_t cs_low(slot_info_t *slot)
 {
     (void)slot;
-    return ch422g_set_sdcard_cs(true);
+    esp_err_t err = ch422g_set_sdcard_cs(true);
+    ESP_LOGD(TAG, "CS -> LOW (assert), rc=%s", esp_err_to_name(err));
+    return err;
 }
 
 static bool card_write_protected(slot_info_t *slot)
@@ -867,6 +871,10 @@ esp_err_t sdspi_host_ch422g_do_transaction(int slot, sdmmc_command_t *cmdinfo)
             r1_sdio_response_to_err(hw_cmd.r1, cmdinfo->opcode, &ret);
             cmdinfo->response[0] = hw_cmd.response[0];
         }
+    }
+
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "CMD%d failed: ret=0x%x, r1=0x%02x", cmdinfo->opcode, ret, hw_cmd.r1);
     }
 
     s_app_cmd = (ret == ESP_OK && cmdinfo->opcode == MMC_APP_CMD);

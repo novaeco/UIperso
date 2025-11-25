@@ -135,6 +135,9 @@ static esp_err_t sdcard_mount(void)
         // Ensure CS released.
         (void)ch422g_set_sdcard_cs(false);
 
+        // Clean up any partially attached SDSPI device to keep the SPI driver consistent.
+        (void)sdspi_host_ch422g_deinit();
+
         // If we initialized the bus in this function, free it on failure.
         if (bus_initialized_here) {
             (void)spi_bus_free(CONFIG_SDCARD_SPI_HOST);
