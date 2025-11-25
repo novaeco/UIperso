@@ -35,6 +35,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 #include "soc/soc_memory_layout.h"
 
@@ -597,6 +598,7 @@ static esp_err_t poll_busy(slot_info_t *slot, int timeout_ms, bool polling)
 
     int64_t t_end = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
     int nonzero_count = 0;
+    int loop_count = 0;
 
     do {
         t_rx = SDSPI_MOSI_IDLE_VAL;
@@ -610,6 +612,9 @@ static esp_err_t poll_busy(slot_info_t *slot, int timeout_ms, bool polling)
             if (++nonzero_count == 2) {
                 return ESP_OK;
             }
+        }
+        if (++loop_count % 8 == 0) {
+            taskYIELD();
         }
     } while (esp_timer_get_time() < t_end);
 
@@ -627,6 +632,7 @@ static esp_err_t poll_data_token(slot_info_t *slot, uint8_t *extra_ptr, size_t *
     };
 
     int64_t t_end = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+    int loop_count = 0;
 
     do {
         memset(t_rx, SDSPI_MOSI_IDLE_VAL, sizeof(t_rx));
@@ -646,6 +652,9 @@ static esp_err_t poll_data_token(slot_info_t *slot, uint8_t *extra_ptr, size_t *
                 ESP_LOGD(TAG, "%s: received 0x%02x while waiting for data", __func__, rd_data);
                 return ESP_ERR_INVALID_RESPONSE;
             }
+        }
+        if (++loop_count % 8 == 0) {
+            taskYIELD();
         }
     } while (esp_timer_get_time() < t_end);
 

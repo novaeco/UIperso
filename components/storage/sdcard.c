@@ -11,6 +11,7 @@
 #include "freertos/task.h"
 #include "driver/sdspi_host.h"
 #include "driver/spi_common.h"
+#include "driver/gpio.h"
 #include "sdmmc_cmd.h"
 
 #include "ch422g.h"
@@ -59,12 +60,14 @@ static void sdcard_cleanup(bool bus_initialized_here)
         ESP_LOGW(TAG, "sdspi_host_ch422g_deinit returned %s", esp_err_to_name(deinit_err));
     }
 
-    esp_err_t bus_free_err = spi_bus_free(CONFIG_SDCARD_SPI_HOST);
-    if (bus_free_err == ESP_ERR_INVALID_STATE && !bus_initialized_here)
+    if (!bus_initialized_here)
     {
-        ESP_LOGD(TAG, "SPI bus %d not owned here; leave as-is", CONFIG_SDCARD_SPI_HOST);
+        ESP_LOGD(TAG, "SPI bus %d reused elsewhere; skip spi_bus_free", CONFIG_SDCARD_SPI_HOST);
+        return;
     }
-    else if (bus_free_err != ESP_OK)
+
+    esp_err_t bus_free_err = spi_bus_free(CONFIG_SDCARD_SPI_HOST);
+    if (bus_free_err != ESP_OK)
     {
         ESP_LOGW(TAG, "spi_bus_free(%d) returned %s", CONFIG_SDCARD_SPI_HOST, esp_err_to_name(bus_free_err));
     }
@@ -90,6 +93,26 @@ static esp_err_t sdcard_mount(void)
     ESP_LOGI(TAG, "CS idle high via CH422G");
     ESP_RETURN_ON_ERROR(ch422g_set_sdcard_cs(false), TAG, "Failed to deassert SD CS via CH422G");
     vTaskDelay(pdMS_TO_TICKS(2));
+
+    // Weak internal pull-ups help when external resistors are not populated on the SD lines.
+    const gpio_num_t pull_pins[] = {
+        CONFIG_SDCARD_SPI_MISO_GPIO,
+        CONFIG_SDCARD_SPI_MOSI_GPIO,
+        CONFIG_SDCARD_SPI_SCK_GPIO,
+    };
+
+    for (size_t i = 0; i < sizeof(pull_pins) / sizeof(pull_pins[0]); ++i)
+    {
+        if (pull_pins[i] == GPIO_NUM_NC)
+        {
+            continue;
+        }
+        esp_err_t pull_err = gpio_set_pull_mode(pull_pins[i], GPIO_PULLUP_ONLY);
+        if (pull_err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "Failed to enable pull-up on GPIO%d (%s)", pull_pins[i], esp_err_to_name(pull_err));
+        }
+    }
 
     // Initialize SPI bus (data lines are native GPIOs).
     spi_bus_config_t bus_config = {

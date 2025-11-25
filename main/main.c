@@ -118,6 +118,11 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
             logs_panel_add_log("I2C: périphérique détecté @0x%02X", addr);
             devices++;
         }
+
+        if ((addr & 0x07) == 0)
+        {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
     }
 
     if (devices == 0)
@@ -241,6 +246,9 @@ void app_main(void)
         ESP_LOGE(TAG, "microSD initialization failed (%s)", esp_err_to_name(sd_err));
     }
 
+    // Yield after synchronous storage probing so IDLE tasks can run before display/touch bring-up.
+    vTaskDelay(pdMS_TO_TICKS(1));
+
     // LVGL + display must be ready before GT911 so the indev can bind to the default display
     lv_init();
     ESP_LOGI(TAG, "After lv_init(), before RGB LCD creation");
@@ -279,6 +287,9 @@ void app_main(void)
     ui_manager_set_degraded(true);
 #endif
     ESP_LOGI(TAG, "After GT911 init, proceeding with peripherals");
+
+    // Avoid monopolizing CPU0 around synchronous peripheral inits.
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     ESP_LOGI(TAG, "Init peripherals step 2: can_bus_init()");
 
