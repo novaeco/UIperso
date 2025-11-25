@@ -42,7 +42,10 @@
 #define GT911_ENABLE 1
 #endif
 
+static const char *TAG_INIT = "APP_INIT";
 static const char *TAG = "MAIN";
+
+static void app_init_task(void *arg);
 
 // Reset loop root-cause (panic reason=4) was LVGL tick double-counting when CONFIG_LV_TICK_CUSTOM=1
 // coexisted with the esp_timer-driven lv_tick_inc(1) callback. Keep the custom tick forcefully
@@ -168,6 +171,26 @@ static void log_heap_metrics(const char *stage)
 
 void app_main(void)
 {
+    BaseType_t ok = xTaskCreatePinnedToCore(
+        app_init_task,
+        "app_init",
+        12288,
+        NULL,
+        5,
+        NULL,
+        1);
+
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG_INIT, "Failed to create app_init_task");
+    }
+
+    vTaskDelete(NULL);
+}
+
+static void app_init_task(void *arg)
+{
+    ESP_LOGI(TAG_INIT, "app_init_task starting on core=%d", xPortGetCoreID());
+
     bool degraded_mode = false;
     esp_log_level_set("*", ESP_LOG_INFO);
     ESP_LOGI(TAG, "ESP32-S3 UI phase 4 starting");
@@ -372,6 +395,7 @@ void app_main(void)
 
     log_heap_metrics("post-init");
 
+    ESP_LOGI(TAG_INIT, "app_init_task done");
     while (true)
     {
         lv_timer_handler();

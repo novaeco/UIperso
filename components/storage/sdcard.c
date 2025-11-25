@@ -49,30 +49,6 @@ static const char *TAG = "SDCARD";
 static bool s_mounted = false;
 static sdmmc_card_t *s_card = NULL;
 
-static void sdcard_cleanup(bool bus_initialized_here)
-{
-    // Release CS and ensure any SDSPI device handles are detached before freeing the bus.
-    (void)ch422g_set_sdcard_cs(false);
-
-    esp_err_t deinit_err = sdspi_host_ch422g_deinit();
-    if (deinit_err != ESP_OK)
-    {
-        ESP_LOGW(TAG, "sdspi_host_ch422g_deinit returned %s", esp_err_to_name(deinit_err));
-    }
-
-    if (!bus_initialized_here)
-    {
-        ESP_LOGD(TAG, "SPI bus %d reused elsewhere; skip spi_bus_free", CONFIG_SDCARD_SPI_HOST);
-        return;
-    }
-
-    esp_err_t bus_free_err = spi_bus_free(CONFIG_SDCARD_SPI_HOST);
-    if (bus_free_err != ESP_OK)
-    {
-        ESP_LOGW(TAG, "spi_bus_free(%d) returned %s", CONFIG_SDCARD_SPI_HOST, esp_err_to_name(bus_free_err));
-    }
-}
-
 static bool sdcard_no_media_error(esp_err_t err)
 {
     return (err == ESP_ERR_NOT_FOUND);
@@ -89,12 +65,14 @@ static esp_err_t sdcard_mount(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    // Ensure SD CS is high (inactive) before starting the SDSPI init sequence.
-    ESP_LOGI(TAG, "CS idle high via CH422G");
-    ESP_RETURN_ON_ERROR(ch422g_set_sdcard_cs(false), TAG, "Failed to deassert SD CS via CH422G");
-    vTaskDelay(pdMS_TO_TICKS(2));
+    const spi_host_device_t host_id = CONFIG_SDCARD_SPI_HOST;
+    bool bus_initialized = false;
+    bool slot_initialized = false;
+    bool mounted = false;
+    sdmmc_card_t *card = NULL;
 
-    // Weak internal pull-ups help when external resistors are not populated on the SD lines.
+    gpio_set_pull_mode(CONFIG_SDCARD_SPI_MISO_GPIO, GPIO_PULLUP_ONLY);
+
     const gpio_num_t pull_pins[] = {
         CONFIG_SDCARD_SPI_MISO_GPIO,
         CONFIG_SDCARD_SPI_MOSI_GPIO,
@@ -114,50 +92,58 @@ static esp_err_t sdcard_mount(void)
         }
     }
 
-    // Initialize SPI bus (data lines are native GPIOs).
+    esp_err_t ret = ch422g_set_sdcard_cs(false);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to deassert SD CS via CH422G (%s)", esp_err_to_name(ret));
+        return ret;
+    }
+    vTaskDelay(pdMS_TO_TICKS(2));
+
     spi_bus_config_t bus_config = {
         .mosi_io_num = CONFIG_SDCARD_SPI_MOSI_GPIO,
         .miso_io_num = CONFIG_SDCARD_SPI_MISO_GPIO,
         .sclk_io_num = CONFIG_SDCARD_SPI_SCK_GPIO,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = 4000, // SDSPI uses 512B blocks; keep conservative
+        .max_transfer_sz = 4096,
+        .flags = 0,
+        .intr_flags = 0,
     };
 
-    bool bus_initialized_here = false;
-
-    ESP_LOGI(TAG, "spi_bus_initialize(host=%d, mosi=%d, miso=%d, sck=%d)",
-             CONFIG_SDCARD_SPI_HOST, CONFIG_SDCARD_SPI_MOSI_GPIO, CONFIG_SDCARD_SPI_MISO_GPIO, CONFIG_SDCARD_SPI_SCK_GPIO);
-
-    esp_err_t err = spi_bus_initialize(CONFIG_SDCARD_SPI_HOST, &bus_config, SDSPI_DEFAULT_DMA);
-    if (err == ESP_ERR_INVALID_STATE) {
+    ret = spi_bus_initialize(host_id, &bus_config, SPI_DMA_CH_AUTO);
+    if (ret == ESP_ERR_INVALID_STATE)
+    {
         ESP_LOGW(TAG, "SPI bus already initialized, reusing");
-    } else if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to init SPI bus (%s)", esp_err_to_name(err));
-        return err;
-    } else {
-        bus_initialized_here = true;
+    }
+    else if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to init SPI bus (%s)", esp_err_to_name(ret));
+        goto fail;
+    }
+    else
+    {
+        bus_initialized = true;
     }
 
-    // Use the custom host that controls the real CS via CH422G.
+    ret = sdspi_ch422g_init_slot(host_id);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to init SDSPI slot (%s)", esp_err_to_name(ret));
+        goto fail;
+    }
+    slot_initialized = true;
+
     sdmmc_host_t host = sdspi_host_ch422g_default();
-    host.slot = CONFIG_SDCARD_SPI_HOST;
-    host.max_freq_khz = 20000; // The driver starts at probing freq then switches; keep conservative
+    host.slot = host_id;
+    host.max_freq_khz = 400;
 
     sdspi_device_config_t dev_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
     dev_cfg.host_id = host.slot;
-
-    // gpio_cs is not wired to ESP32; CS is driven by CH422G in the custom host driver.
-    // Keep it NC to avoid accidental GPIO manipulation.
     dev_cfg.gpio_cs  = GPIO_NUM_NC;
     dev_cfg.gpio_cd  = GPIO_NUM_NC;
     dev_cfg.gpio_wp  = GPIO_NUM_NC;
     dev_cfg.gpio_int = GPIO_NUM_NC;
-
-    if (dev_cfg.gpio_cs == GPIO_NUM_4) {
-        ESP_LOGW(TAG, "Ignoring GPIO4 for SD CS; real CS is EXIO4 via CH422G");
-        dev_cfg.gpio_cs = GPIO_NUM_NC;
-    }
 
     const esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
@@ -166,33 +152,53 @@ static esp_err_t sdcard_mount(void)
         .disk_status_check_enable = true,
     };
 
-    sdmmc_card_t *card = NULL;
-
     ESP_LOGI(TAG, "esp_vfs_fat_sdspi_mount start (custom CH422G CS host)");
-    err = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &dev_cfg, &mount_config, &card);
-    ESP_LOGI(TAG, "esp_vfs_fat_sdspi_mount result=%s", esp_err_to_name(err));
+    ret = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &dev_cfg, &mount_config, &card);
+    ESP_LOGI(TAG, "esp_vfs_fat_sdspi_mount result=%s", esp_err_to_name(ret));
 
-    if (err != ESP_OK) {
-        if (sdcard_no_media_error(err)) {
+    if (ret != ESP_OK)
+    {
+        if (sdcard_no_media_error(ret)) {
             ESP_LOGW(TAG, "No SD card detected on %s; continuing without storage", SDCARD_MOUNT_POINT);
-        } else if (err == ESP_ERR_TIMEOUT) {
-            ESP_LOGW(TAG, "microSD init timed out (%s); card may be missing or not responding; continuing without storage", esp_err_to_name(err));
-        } else if (err == ESP_ERR_INVALID_RESPONSE || err == ESP_FAIL) {
-            ESP_LOGW(TAG, "microSD init failed, card not responding correctly (%s); continuing without storage", esp_err_to_name(err));
+        } else if (ret == ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "microSD init timed out (%s); card may be missing or not responding; continuing without storage", esp_err_to_name(ret));
+        } else if (ret == ESP_ERR_INVALID_RESPONSE || ret == ESP_FAIL) {
+            ESP_LOGW(TAG, "microSD init failed, card not responding correctly (%s); continuing without storage", esp_err_to_name(ret));
         } else {
-            ESP_LOGE(TAG, "Failed to mount %s (%s)", SDCARD_MOUNT_POINT, esp_err_to_name(err));
+            ESP_LOGE(TAG, "Failed to mount %s (%s)", SDCARD_MOUNT_POINT, esp_err_to_name(ret));
         }
-
-        sdcard_cleanup(bus_initialized_here);
-        return err;
+        goto fail;
     }
 
+    mounted = true;
     s_card = card;
     s_mounted = true;
 
     sdmmc_card_print_info(stdout, card);
     ESP_LOGI(TAG, "microSD mounted OK on %s", SDCARD_MOUNT_POINT);
     return ESP_OK;
+
+fail:
+    if (mounted && card)
+    {
+        esp_vfs_fat_sdcard_unmount(SDCARD_MOUNT_POINT, card);
+        mounted = false;
+        card = NULL;
+    }
+
+    if (slot_initialized)
+    {
+        sdspi_ch422g_deinit_slot(host_id);
+        slot_initialized = false;
+    }
+
+    if (bus_initialized)
+    {
+        spi_bus_free(host_id);
+        bus_initialized = false;
+    }
+
+    return ret;
 }
 
 esp_err_t sdcard_init(void)

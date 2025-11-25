@@ -87,6 +87,8 @@ static const bool no_use_polling = false;
 static _lock_t s_lock;
 static bool s_app_cmd;
 static bool s_logged_cs_assert;
+static spi_device_handle_t s_sd_dev = NULL;
+static spi_host_device_t s_sd_host = SPI1_HOST;
 
 static uint8_t sdspi_msg_crc7_ch422g(sdspi_hw_cmd_t* hw_cmd)
 {
@@ -275,7 +277,9 @@ static esp_err_t go_idle_clockout(slot_info_t *slot)
     }
 
     ESP_LOGD(TAG, "MISO during idle clocks (first 10 bytes)");
+#if CONFIG_LOG_DEFAULT_LEVEL >= ESP_LOG_DEBUG
     ESP_LOG_BUFFER_HEX(TAG, data, 10);
+#endif
     return ESP_OK;
 }
 
@@ -355,6 +359,19 @@ static esp_err_t ensure_slot_initialized(int host_id, slot_info_t **out_slot)
     return ESP_OK;
 }
 
+esp_err_t sdspi_ch422g_init_slot(spi_host_device_t host_id)
+{
+    slot_info_t *slot = NULL;
+    esp_err_t ret = ensure_slot_initialized(host_id, &slot);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    s_sd_host = host_id;
+    s_sd_dev = slot->spi_handle;
+    return ESP_OK;
+}
+
 static esp_err_t deinit_slot(slot_info_t *slot)
 {
     if (slot->spi_handle) {
@@ -380,6 +397,9 @@ esp_err_t sdspi_host_ch422g_remove_device(sdspi_dev_handle_t handle)
     if (slot == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (s_sd_dev == slot->spi_handle) {
+        s_sd_dev = NULL;
+    }
     return deinit_slot(slot);
 }
 
@@ -390,7 +410,29 @@ esp_err_t sdspi_host_ch422g_deinit(void)
         if (slot == NULL) continue;
         (void)deinit_slot(slot);
     }
+    s_sd_dev = NULL;
     return ESP_OK;
+}
+
+void sdspi_ch422g_deinit_slot(spi_host_device_t host_id)
+{
+    slot_info_t *slot = get_slot_info(host_id);
+    if (slot != NULL && slot->spi_handle != NULL && s_sd_dev == slot->spi_handle && s_sd_host == host_id)
+    {
+        esp_err_t rem_ret = spi_bus_remove_device(slot->spi_handle);
+        if (rem_ret != ESP_OK)
+        {
+            ESP_LOGW(TAG, "spi_bus_remove_device failed during slot deinit (%s)", esp_err_to_name(rem_ret));
+        }
+        slot->spi_handle = NULL;
+        s_sd_dev = NULL;
+    }
+
+    slot = remove_slot_info(host_id);
+    if (slot != NULL)
+    {
+        (void)deinit_slot(slot);
+    }
 }
 
 esp_err_t sdspi_host_ch422g_set_card_clk(sdspi_dev_handle_t handle, uint32_t freq_khz)
