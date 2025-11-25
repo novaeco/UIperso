@@ -85,6 +85,7 @@ static const bool use_polling = true;
 static const bool no_use_polling = false;
 static _lock_t s_lock;
 static bool s_app_cmd;
+static bool s_logged_cs_assert;
 
 static uint8_t sdspi_msg_crc7_ch422g(sdspi_hw_cmd_t* hw_cmd)
 {
@@ -213,6 +214,10 @@ static esp_err_t cs_low(slot_info_t *slot)
     (void)slot;
     esp_err_t err = ch422g_set_sdcard_cs(true);
     ESP_LOGD(TAG, "CS -> LOW (assert), rc=%s", esp_err_to_name(err));
+    if (!s_logged_cs_assert && err == ESP_OK) {
+        ESP_LOGI(TAG, "CS asserted via EXIO4 (idx=%d)", 4);
+        s_logged_cs_assert = true;
+    }
     // CS toggles through I2C → CH422G, give it a few microseconds to settle
     esp_rom_delay_us(5);
     return err;

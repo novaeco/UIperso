@@ -109,6 +109,11 @@ static esp_err_t sdcard_mount(void)
     dev_cfg.gpio_wp  = GPIO_NUM_NC;
     dev_cfg.gpio_int = GPIO_NUM_NC;
 
+    if (dev_cfg.gpio_cs == GPIO_NUM_4) {
+        ESP_LOGW(TAG, "Ignoring GPIO4 for SD CS; real CS is EXIO4 via CH422G");
+        dev_cfg.gpio_cs = GPIO_NUM_NC;
+    }
+
     const esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
         .max_files = CONFIG_SDCARD_MAX_FILES,
@@ -133,15 +138,15 @@ static esp_err_t sdcard_mount(void)
             ESP_LOGE(TAG, "Failed to mount %s (%s)", SDCARD_MOUNT_POINT, esp_err_to_name(err));
         }
 
-        // Ensure CS released.
+        // Ensure CS released and the SDSPI device/bus are cleaned up to avoid leftover CS handles.
         (void)ch422g_set_sdcard_cs(false);
-
-        // Clean up any partially attached SDSPI device to keep the SPI driver consistent.
         (void)sdspi_host_ch422g_deinit();
 
-        // If we initialized the bus in this function, free it on failure.
-        if (bus_initialized_here) {
-            (void)spi_bus_free(CONFIG_SDCARD_SPI_HOST);
+        esp_err_t bus_free_err = spi_bus_free(CONFIG_SDCARD_SPI_HOST);
+        if (bus_free_err == ESP_ERR_INVALID_STATE && !bus_initialized_here) {
+            ESP_LOGD(TAG, "SPI bus %d not owned here; leave as-is", CONFIG_SDCARD_SPI_HOST);
+        } else if (bus_free_err != ESP_OK) {
+            ESP_LOGW(TAG, "spi_bus_free(%d) returned %s", CONFIG_SDCARD_SPI_HOST, esp_err_to_name(bus_free_err));
         }
         return err;
     }
