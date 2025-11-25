@@ -71,6 +71,7 @@ static esp_err_t sdcard_mount(void)
     vTaskDelay(pdMS_TO_TICKS(2));
 
     // Configure the dummy CS GPIO to satisfy the SDSPI API; it is not wired to the card.
+    ESP_LOGI(TAG, "step 1b: configure dummy CS GPIO (isolated from CH422G/I2C path)");
     const gpio_config_t dummy_cs_cfg = {
         .pin_bit_mask = 1ULL << SDCARD_DUMMY_CS_GPIO,
         .mode = GPIO_MODE_OUTPUT,
@@ -80,6 +81,7 @@ static esp_err_t sdcard_mount(void)
     };
     ESP_RETURN_ON_ERROR(gpio_config(&dummy_cs_cfg), TAG, "Failed to init dummy CS GPIO");
     ESP_RETURN_ON_ERROR(gpio_set_level(SDCARD_DUMMY_CS_GPIO, 1), TAG, "Failed to set dummy CS high");
+    ESP_LOGI(TAG, "step 1c: dummy CS configured high (no ISR involvement)");
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = CONFIG_SDCARD_SPI_HOST; // SPI2_HOST expected
