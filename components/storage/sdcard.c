@@ -107,7 +107,14 @@ static void sdcard_cleanup(sdcard_state_t *state)
         state->slot_initialized = false;
     }
 
+    // Ensure any lingering device handle is removed before touching the bus
     (void)sdspi_host_ch422g_deinit();
+
+    if (state->slot_initialized == false && state->host_id >= SPI1_HOST && state->host_id < SOC_SPI_PERIPH_NUM)
+    {
+        // If init failed mid-way, a handle may still exist: request slot cleanup by host id
+        sdspi_ch422g_deinit_slot(state->host_id);
+    }
 
     if (state->bus_initialized)
     {

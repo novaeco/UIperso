@@ -46,6 +46,8 @@ static const char *TAG_INIT = "APP_INIT";
 static const char *TAG = "MAIN";
 
 static void app_init_task(void *arg);
+static void lvgl_task(void *arg);
+static void exio4_toggle_selftest(void);
 
 #define INIT_YIELD()            \
     do {                        \
@@ -233,6 +235,8 @@ static void app_init_task(void *arg)
 
     if (ch422g_is_available())
     {
+        exio4_toggle_selftest();
+
         esp_err_t lcd_err = ch422g_set_lcd_power(true);
         if (lcd_err != ESP_OK)
         {
@@ -446,15 +450,61 @@ static void app_init_task(void *arg)
 
     log_heap_metrics("post-init");
 
-    ESP_LOGI(TAG_INIT, "app_init_task done, entering LVGL loop on core %d", xPortGetCoreID());
+    ESP_LOGI(TAG_INIT, "app_init_task done, starting LVGL task on core %d", 1);
+
+    BaseType_t lvgl_ok = xTaskCreatePinnedToCore(
+        lvgl_task,
+        "lvgl",
+        12288,
+        NULL,
+        5,
+        NULL,
+        1);
+
+    if (lvgl_ok != pdPASS)
+    {
+        ESP_LOGE(TAG_INIT, "Failed to create LVGL task; stopping app_init_task");
+    }
+
+    vTaskDelete(NULL);
+}
+
+static void lvgl_task(void *arg)
+{
+    ESP_LOGI(TAG, "LVGL task running on core %d", xPortGetCoreID());
 
     for (;;)
     {
-        uint32_t wait = lv_timer_handler();
-        if (wait > 20)
+        uint32_t wait_ms = lv_timer_handler();
+        if (wait_ms < 5)
         {
-            wait = 20;
+            wait_ms = 5;
         }
-        vTaskDelay(pdMS_TO_TICKS(wait));
+        else if (wait_ms > 10)
+        {
+            wait_ms = 10;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(wait_ms));
     }
+}
+
+static void exio4_toggle_selftest(void)
+{
+    ESP_LOGI(TAG, "EXIO4 self-test: toggling CS every 200 ms for 2 s (active low)");
+    const TickType_t delay_ticks = pdMS_TO_TICKS(200);
+    for (int i = 0; i < 10; ++i)
+    {
+        const bool assert_cs = (i & 0x01) == 0;
+        esp_err_t err = ch422g_set_sdcard_cs(assert_cs);
+        ESP_LOGI(TAG, "EXIO4 %s (expected %s)", assert_cs ? "LOW" : "HIGH", assert_cs ? "assert" : "release");
+        if (err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "EXIO4 toggle %d failed (%s)", i, esp_err_to_name(err));
+        }
+        vTaskDelay(delay_ticks);
+    }
+
+    // Leave CS released at the end of the self-test
+    (void)ch422g_set_sdcard_cs(false);
 }

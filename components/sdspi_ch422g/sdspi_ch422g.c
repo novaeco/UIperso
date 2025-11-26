@@ -217,6 +217,8 @@ static esp_err_t cs_high(slot_info_t *slot)
     (void)slot;
     esp_err_t err = ch422g_set_sdcard_cs(false);
     ESP_LOGD(TAG, "CS -> HIGH (release), rc=%s", esp_err_to_name(err));
+    // CS toggles through I2C → CH422G, give it a few microseconds to settle
+    esp_rom_delay_us(5);
     return err;
 }
 
@@ -330,6 +332,9 @@ static esp_err_t configure_spi_dev(slot_info_t *slot, int clock_speed_hz)
             ESP_LOGE(TAG, "Failed to remove SPI device before reconfig (%s)", esp_err_to_name(rem_ret));
             return rem_ret;
         }
+        if (s_sd_dev == slot->spi_handle) {
+            s_sd_dev = NULL;
+        }
         slot->spi_handle = NULL;
         slot->device_attached = false;
     }
@@ -343,6 +348,9 @@ static esp_err_t configure_spi_dev(slot_info_t *slot, int clock_speed_hz)
     esp_err_t ret = spi_bus_add_device(slot->host_id, &devcfg, &slot->spi_handle);
     if (ret == ESP_OK) {
         slot->device_attached = true;
+        if (slot->host_id == s_sd_host) {
+            s_sd_dev = slot->spi_handle;
+        }
         ESP_LOGI(TAG, "Host %d: SPI device attached (bus_owned=%d)", slot->host_id, slot->bus_initialized_by_driver);
     }
     return ret;
@@ -370,6 +378,8 @@ static esp_err_t ensure_slot_initialized(int host_id, slot_info_t **out_slot)
     if (slot == NULL) {
         return ESP_ERR_NO_MEM;
     }
+
+    s_sd_host = host_id;
 
     *slot = (slot_info_t) {
         .host_id = host_id,
@@ -447,6 +457,9 @@ static esp_err_t deinit_slot(slot_info_t *slot)
             ESP_LOGW(TAG, "Host %d: spi_bus_remove_device failed during deinit (%s)", slot->host_id, esp_err_to_name(rem_ret));
         } else {
             ESP_LOGI(TAG, "Host %d: SPI device removed", slot->host_id);
+            if (s_sd_dev == slot->spi_handle) {
+                s_sd_dev = NULL;
+            }
             slot->spi_handle = NULL;
             slot->device_attached = false;
         }
