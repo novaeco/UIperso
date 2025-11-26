@@ -33,7 +33,8 @@ CONFIG_LV_FONT_MONTSERRAT_24=y
 
 # Increase main task resources to accommodate LVGL layout and log processing
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
-CONFIG_ESP_TASK_WDT_TIMEOUT_S=15
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
 
 # Prevent regression to the double-tick panic seen when CONFIG_LV_TICK_CUSTOM was enabled
 CONFIG_LV_TICK_CUSTOM=n

@@ -9,6 +9,9 @@
 #include "esp_psram.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "hal/lcd_types.h"
 
 #define LCD_H_RES                  1024
@@ -95,6 +98,8 @@ void rgb_lcd_init(void)
         return;
     }
 
+    const int64_t t_start = esp_timer_get_time();
+
     if (!esp_psram_is_initialized())
     {
         ESP_LOGE(TAG, "PSRAM not initialized: cannot allocate LVGL draw buffers");
@@ -164,6 +169,9 @@ void rgb_lcd_init(void)
         return;
     }
 
+    // Give IDLE0 a chance to run while the panel powers up.
+    vTaskDelay(pdMS_TO_TICKS(1));
+
     err = esp_lcd_panel_reset(s_panel_handle);
     if (err != ESP_OK)
     {
@@ -171,12 +179,16 @@ void rgb_lcd_init(void)
         return;
     }
 
+    vTaskDelay(pdMS_TO_TICKS(1));
+
     err = esp_lcd_panel_init(s_panel_handle);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "RGB panel init failed: %s", esp_err_to_name(err));
         return;
     }
+
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     err = esp_lcd_panel_disp_on_off(s_panel_handle, true);
     if (err == ESP_ERR_NOT_SUPPORTED)
@@ -197,7 +209,8 @@ void rgb_lcd_init(void)
     lv_display_set_flush_cb(s_disp, rgb_lcd_flush);
     lv_display_set_default(s_disp);
 
-    ESP_LOGI(TAG, "RGB panel initialized (%dx%d)", LCD_H_RES, LCD_V_RES);
+    const int64_t elapsed_ms = (esp_timer_get_time() - t_start) / 1000;
+    ESP_LOGI(TAG, "RGB panel initialized (%dx%d) in %lld ms", LCD_H_RES, LCD_V_RES, (long long)elapsed_ms);
 }
 
 lv_display_t *rgb_lcd_get_disp(void)
