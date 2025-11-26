@@ -71,6 +71,9 @@ static uint8_t *s_buf2 = NULL;
 
 static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
+    static uint32_t s_flush_count = 0;
+    static int64_t s_last_log_us = 0;
+
     const int32_t x1 = area->x1;
     const int32_t y1 = area->y1;
     const int32_t x2 = area->x2 + 1;
@@ -81,6 +84,15 @@ static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Panel draw failed (%s)", esp_err_to_name(err));
+    }
+
+    s_flush_count++;
+    const int64_t now_us = esp_timer_get_time();
+    if (now_us - s_last_log_us >= 1000000)
+    {
+        ESP_LOGI(TAG, "RGB: flush/s=%u", (unsigned int)s_flush_count);
+        s_flush_count = 0;
+        s_last_log_us = now_us;
     }
 
     lv_display_flush_ready(disp);

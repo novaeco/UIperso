@@ -444,7 +444,7 @@ static void app_init_task(void *arg)
         NULL,
         6,
         NULL,
-        0);
+        1);
 
     if (lvgl_ok != pdPASS)
     {
@@ -456,7 +456,7 @@ static void app_init_task(void *arg)
 
 static void lvgl_task(void *arg)
 {
-    ESP_LOGI("LVGL", "task started on core=%d", xPortGetCoreID());
+    ESP_LOGI(TAG, "MAIN: lvgl task started on core=%d", xPortGetCoreID());
 
     for (;;)
     {
