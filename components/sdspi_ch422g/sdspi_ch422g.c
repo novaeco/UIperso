@@ -76,10 +76,28 @@ typedef struct {
     uint8_t data_crc_enabled : 1;    //!< CRC enabled by upper layer
     uint8_t *block_buf;              //!< DMA intermediate buffer (lazy alloc)
     SemaphoreHandle_t semphr_int;     //!< Unused (no SDIO IRQ line)
+    bool bus_initialized_by_driver;  //!< True if this driver called spi_bus_initialize
+    bool device_attached;            //!< True if spi_bus_add_device succeeded
 } slot_info_t;
+
+// Forward declarations for internal helpers
+static esp_err_t start_command_read_blocks(slot_info_t *slot, sdspi_hw_cmd_t *cmd,
+        uint8_t *data, uint32_t rx_length, bool need_stop_command);
+
+static esp_err_t start_command_write_blocks(slot_info_t *slot, sdspi_hw_cmd_t *cmd,
+        const uint8_t *data, uint32_t tx_length, bool multi_block, bool stop_trans);
+
+static esp_err_t start_command_default(slot_info_t *slot, int flags, sdspi_hw_cmd_t *cmd);
+static esp_err_t shift_cmd_response(sdspi_hw_cmd_t *cmd, int sent_bytes);
+static esp_err_t ensure_slot_initialized(int host_id, slot_info_t **out_slot);
+static esp_err_t configure_spi_dev(slot_info_t *slot, int clock_speed_hz);
+static esp_err_t deinit_slot(slot_info_t *slot);
+static esp_err_t go_idle_clockout(slot_info_t *slot);
+static void release_bus(slot_info_t *slot);
 
 // Reserved for old API to be back-compatible
 static slot_info_t *s_slots[SOC_SPI_PERIPH_NUM] = {};
+static bool s_bus_initialized_by_driver[SOC_SPI_PERIPH_NUM] = {};
 static const char *TAG = "sdspi_ch422g";
 
 static const bool use_polling = true;
@@ -162,15 +180,6 @@ static void r1_sdio_response_to_err(uint8_t r1, int cmd, esp_err_t *out_err)
         *out_err = ESP_ERR_INVALID_RESPONSE;
     }
 }
-
-static esp_err_t start_command_read_blocks(slot_info_t *slot, sdspi_hw_cmd_t *cmd,
-        uint8_t *data, uint32_t rx_length, bool need_stop_command);
-
-static esp_err_t start_command_write_blocks(slot_info_t *slot, sdspi_hw_cmd_t *cmd,
-        const uint8_t *data, uint32_t tx_length, bool multi_block, bool stop_trans);
-
-static esp_err_t start_command_default(slot_info_t *slot, int flags, sdspi_hw_cmd_t *cmd);
-static esp_err_t shift_cmd_response(sdspi_hw_cmd_t *cmd, int sent_bytes);
 
 static slot_info_t* get_slot_info(sdspi_dev_handle_t handle)
 {
@@ -322,6 +331,7 @@ static esp_err_t configure_spi_dev(slot_info_t *slot, int clock_speed_hz)
             return rem_ret;
         }
         slot->spi_handle = NULL;
+        slot->device_attached = false;
     }
     spi_device_interface_config_t devcfg = {
         .clock_speed_hz = clock_speed_hz,
@@ -330,7 +340,12 @@ static esp_err_t configure_spi_dev(slot_info_t *slot, int clock_speed_hz)
         .spics_io_num = GPIO_NUM_NC,
         .queue_size = SDSPI_TRANSACTION_COUNT,
     };
-    return spi_bus_add_device(slot->host_id, &devcfg, &slot->spi_handle);
+    esp_err_t ret = spi_bus_add_device(slot->host_id, &devcfg, &slot->spi_handle);
+    if (ret == ESP_OK) {
+        slot->device_attached = true;
+        ESP_LOGI(TAG, "Host %d: SPI device attached (bus_owned=%d)", slot->host_id, slot->bus_initialized_by_driver);
+    }
+    return ret;
 }
 
 esp_err_t sdspi_host_ch422g_init(void)
@@ -366,11 +381,20 @@ static esp_err_t ensure_slot_initialized(int host_id, slot_info_t **out_slot)
         .block_buf = NULL,
         .data_crc_enabled = 0,
         .spi_handle = NULL,
+        .bus_initialized_by_driver = s_bus_initialized_by_driver[host_id],
+        .device_attached = false,
     };
 
     esp_err_t ret = configure_spi_dev(slot, SDMMC_FREQ_PROBING * 1000);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add SPI device for host %d (%s)", host_id, esp_err_to_name(ret));
+        if (slot->bus_initialized_by_driver) {
+            esp_err_t free_ret = spi_bus_free(slot->host_id);
+            if (free_ret != ESP_OK) {
+                ESP_LOGW(TAG, "Host %d: spi_bus_free after configure failure returned %s", host_id, esp_err_to_name(free_ret));
+            }
+            s_bus_initialized_by_driver[host_id] = false;
+        }
         free(slot);
         return ret;
     }
@@ -378,7 +402,20 @@ static esp_err_t ensure_slot_initialized(int host_id, slot_info_t **out_slot)
     ret = cs_high(slot);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to release SD CS via CH422G during slot init (%s)", esp_err_to_name(ret));
-        spi_bus_remove_device(slot->spi_handle);
+        if (slot->device_attached) {
+            esp_err_t rem_ret = spi_bus_remove_device(slot->spi_handle);
+            if (rem_ret != ESP_OK) {
+                ESP_LOGW(TAG, "Host %d: spi_bus_remove_device failed after CS release error (%s)", host_id, esp_err_to_name(rem_ret));
+            }
+            slot->device_attached = false;
+        }
+        if (slot->bus_initialized_by_driver) {
+            esp_err_t free_ret = spi_bus_free(slot->host_id);
+            if (free_ret != ESP_OK) {
+                ESP_LOGW(TAG, "Host %d: spi_bus_free failed after CS release error (%s)", host_id, esp_err_to_name(free_ret));
+            }
+            s_bus_initialized_by_driver[host_id] = false;
+        }
         free(slot);
         return ret;
     }
@@ -407,16 +444,34 @@ static esp_err_t deinit_slot(slot_info_t *slot)
     if (slot->spi_handle) {
         esp_err_t rem_ret = spi_bus_remove_device(slot->spi_handle);
         if (rem_ret != ESP_OK) {
-            ESP_LOGW(TAG, "spi_bus_remove_device failed during deinit (%s)", esp_err_to_name(rem_ret));
+            ESP_LOGW(TAG, "Host %d: spi_bus_remove_device failed during deinit (%s)", slot->host_id, esp_err_to_name(rem_ret));
         } else {
+            ESP_LOGI(TAG, "Host %d: SPI device removed", slot->host_id);
             slot->spi_handle = NULL;
+            slot->device_attached = false;
         }
     }
 
-    free(slot->block_buf);
-    slot->block_buf = NULL;
+    if (slot->bus_initialized_by_driver) {
+        esp_err_t free_ret = spi_bus_free(slot->host_id);
+        if (free_ret != ESP_OK) {
+            ESP_LOGW(TAG, "Host %d: spi_bus_free failed during deinit (%s)", slot->host_id, esp_err_to_name(free_ret));
+        } else {
+            ESP_LOGI(TAG, "Host %d: SPI bus freed", slot->host_id);
+            s_bus_initialized_by_driver[slot->host_id] = false;
+        }
+    }
 
-    (void)cs_high(slot);
+    if (slot->block_buf) {
+        free(slot->block_buf);
+        slot->block_buf = NULL;
+    }
+
+    esp_err_t cs_ret = cs_high(slot);
+    if (cs_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Host %d: failed to release CS during deinit (%s)", slot->host_id, esp_err_to_name(cs_ret));
+    }
+
     free(slot);
     return ESP_OK;
 }
@@ -500,11 +555,20 @@ esp_err_t sdspi_host_ch422g_init_device(const sdspi_device_config_t* slot_config
         .block_buf = NULL,
         .data_crc_enabled = 0,
         .spi_handle = NULL,
+        .bus_initialized_by_driver = s_bus_initialized_by_driver[slot_config->host_id],
+        .device_attached = false,
     };
 
     esp_err_t ret = configure_spi_dev(slot, SDMMC_FREQ_PROBING * 1000);
     if (ret != ESP_OK) {
         ESP_LOGD(TAG, "spi_bus_add_device failed with rc=0x%x", ret);
+        if (slot->bus_initialized_by_driver) {
+            esp_err_t free_ret = spi_bus_free(slot->host_id);
+            if (free_ret != ESP_OK) {
+                ESP_LOGW(TAG, "Host %d: spi_bus_free after configure failure returned %s", slot->host_id, esp_err_to_name(free_ret));
+            }
+            s_bus_initialized_by_driver[slot->host_id] = false;
+        }
         free(slot);
         return ret;
     }
@@ -513,7 +577,20 @@ esp_err_t sdspi_host_ch422g_init_device(const sdspi_device_config_t* slot_config
     ret = cs_high(slot);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to release SD CS via CH422G (%s)", esp_err_to_name(ret));
-        spi_bus_remove_device(slot->spi_handle);
+        if (slot->device_attached) {
+            esp_err_t rem_ret = spi_bus_remove_device(slot->spi_handle);
+            if (rem_ret != ESP_OK) {
+                ESP_LOGW(TAG, "Host %d: spi_bus_remove_device failed after CS release error (%s)", slot->host_id, esp_err_to_name(rem_ret));
+            }
+            slot->device_attached = false;
+        }
+        if (slot->bus_initialized_by_driver) {
+            esp_err_t free_ret = spi_bus_free(slot->host_id);
+            if (free_ret != ESP_OK) {
+                ESP_LOGW(TAG, "Host %d: spi_bus_free failed after CS release error (%s)", slot->host_id, esp_err_to_name(free_ret));
+            }
+            s_bus_initialized_by_driver[slot->host_id] = false;
+        }
         free(slot);
         return ret;
     }
@@ -1095,6 +1172,9 @@ esp_err_t sdspi_host_ch422g_init_slot(int slot, const sdspi_slot_config_t* slot_
         return ret;
     }
 
+    s_bus_initialized_by_driver[host_id] = true;
+    ESP_LOGI(TAG, "Host %d: SPI bus initialized (DMA=%d)", host_id, slot_config->dma_channel);
+
     sdspi_dev_handle_t sdspi_handle;
     sdspi_device_config_t dev_config = {
         .host_id = host_id,
@@ -1107,6 +1187,7 @@ esp_err_t sdspi_host_ch422g_init_slot(int slot, const sdspi_slot_config_t* slot_
     ret = sdspi_host_ch422g_init_device(&dev_config, &sdspi_handle);
     if (ret != ESP_OK) {
         spi_bus_free(slot);
+        s_bus_initialized_by_driver[host_id] = false;
         return ret;
     }
 
@@ -1114,6 +1195,7 @@ esp_err_t sdspi_host_ch422g_init_slot(int slot, const sdspi_slot_config_t* slot_
         ESP_LOGE(TAG, "Deprecated sdspi_host_init_slot should be called before other devices on the bus.");
         (void)sdspi_host_ch422g_remove_device(sdspi_handle);
         spi_bus_free(slot);
+        s_bus_initialized_by_driver[host_id] = false;
         return ESP_ERR_INVALID_STATE;
     }
 
