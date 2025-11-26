@@ -300,7 +300,7 @@ esp_err_t sdspi_ch422g_idle_clocks(spi_host_device_t host_id)
         return ret;
     }
 
-    ret = spi_device_acquire_bus(slot->spi_handle, pdMS_TO_TICKS(50));
+    ret = spi_device_acquire_bus(slot->spi_handle, portMAX_DELAY);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to acquire SPI bus for idle clocks (%s)", esp_err_to_name(ret));
         return ret;

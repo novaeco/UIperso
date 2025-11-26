@@ -9,7 +9,6 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
-#include "esp_task_wdt.h"
 #include "lvgl.h"
 #include "driver/i2c_master.h"
 
@@ -47,12 +46,10 @@ static const char *TAG_INIT = "APP_INIT";
 static const char *TAG = "MAIN";
 
 static void app_init_task(void *arg);
-static void lvgl_task(void *arg);
 
 #define INIT_YIELD()            \
     do {                        \
         vTaskDelay(pdMS_TO_TICKS(1)); \
-        esp_task_wdt_reset();   \
     } while (0)
 static inline int64_t stage_begin(const char *stage)
 {
@@ -198,7 +195,7 @@ void app_main(void)
         NULL,
         5,
         NULL,
-        1);
+        0);
 
     if (ok != pdPASS) {
         ESP_LOGE(TAG_INIT, "Failed to create app_init_task");
@@ -415,14 +412,6 @@ static void app_init_task(void *arg)
     }
 #endif
 
-    ESP_LOGI(TAG, "Starting dedicated LVGL task on CPU0");
-    BaseType_t lvgl_ok = xTaskCreatePinnedToCore(lvgl_task, "lvgl", 8192, NULL, 5, NULL, 0);
-    if (lvgl_ok != pdPASS)
-    {
-        ESP_LOGE(TAG, "Failed to create LVGL task");
-    }
-    INIT_YIELD();
-
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");
     int64_t t_ui = stage_begin("ui_manager_init_step1_theme");
     esp_err_t ui_err = ui_manager_init_step1_theme();
@@ -457,14 +446,7 @@ static void app_init_task(void *arg)
 
     log_heap_metrics("post-init");
 
-    ESP_LOGI(TAG_INIT, "app_init_task done");
-    vTaskDelete(NULL);
-}
-
-static void lvgl_task(void *arg)
-{
-    (void)arg;
-    ESP_LOGI("LVGL", "lvgl_task starting on core=%d", xPortGetCoreID());
+    ESP_LOGI(TAG_INIT, "app_init_task done, entering LVGL loop on core %d", xPortGetCoreID());
 
     for (;;)
     {

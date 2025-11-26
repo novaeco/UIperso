@@ -102,6 +102,7 @@ static void sdcard_cleanup(sdcard_state_t *state)
 
     if (state->slot_initialized)
     {
+        ESP_LOGI(TAG, "Deinitializing SDSPI slot on host %d", state->host_id);
         sdspi_ch422g_deinit_slot(state->host_id);
         state->slot_initialized = false;
     }
@@ -138,6 +139,13 @@ static esp_err_t sdcard_mount(void)
     s_state.host_id = host_id;
     sdmmc_card_t *card = NULL;
 
+    ESP_LOGI(TAG,
+             "SDSPI host=%d pins: MOSI=%d, MISO=%d, SCK=%d, CS=CH422G EXIO4 (active low)",
+             host_id,
+             CONFIG_SDCARD_SPI_MOSI_GPIO,
+             CONFIG_SDCARD_SPI_MISO_GPIO,
+             CONFIG_SDCARD_SPI_SCK_GPIO);
+
     gpio_set_pull_mode(CONFIG_SDCARD_SPI_MISO_GPIO, GPIO_PULLUP_ONLY);
 
     const gpio_num_t pull_pins[] = {
@@ -165,6 +173,7 @@ static esp_err_t sdcard_mount(void)
         ESP_LOGE(TAG, "Failed to deassert SD CS via CH422G (%s)", esp_err_to_name(ret));
         return ret;
     }
+    ESP_LOGI(TAG, "CH422G EXIO4 set HIGH (card released) prior to bus init");
     vTaskDelay(pdMS_TO_TICKS(2));
 
     spi_bus_config_t bus_config = {
@@ -200,6 +209,8 @@ static esp_err_t sdcard_mount(void)
         goto fail;
     }
     s_state.slot_initialized = true;
+
+    ESP_LOGI(TAG, "Sending idle clocks on host %d before mount", host_id);
 
     ret = sdspi_ch422g_idle_clocks(host_id);
     if (ret != ESP_OK)
