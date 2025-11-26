@@ -1,0 +1,11 @@
+menu "Application Configuration"
+
+config ENABLE_SDCARD
+    bool "Enable microSD (external storage)"
+    default y
+    help
+        Enable initialization and mounting of the external microSD card.
+        Disable to skip any SD card probing and boot without external
+        storage access.
+
+endmenu
