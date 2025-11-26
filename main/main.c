@@ -17,6 +17,7 @@
 #include "i2c_bus_shared.h"
 #include "rgb_lcd.h"
 #include "sdcard.h"
+#include "sdkconfig.h"
 
 #include "can_driver.h"
 #include "cs8501.h"
@@ -277,6 +278,7 @@ static void app_init_task(void *arg)
 
     ESP_LOGI(TAG, "After CH422G/LCD sequencing, before LVGL core init");
 
+#if CONFIG_ENABLE_SDCARD
     ESP_LOGI(TAG, "Init peripherals step 1: sdcard_init() before RGB panel start");
     // Silence noisy IDF-level errors from the VFS FAT SDMMC helper when the slot is empty.
     esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_NONE);
@@ -292,11 +294,19 @@ static void app_init_task(void *arg)
             ESP_LOGW(TAG, "microSD test file failed (%s)", esp_err_to_name(test_err));
         }
     }
-    else if (sd_err != ESP_ERR_TIMEOUT && sd_err != ESP_ERR_NOT_FOUND)
+    else if (sd_err == ESP_ERR_TIMEOUT || sd_err == ESP_ERR_NOT_FOUND)
     {
-        ESP_LOGE(TAG, "microSD initialization failed (%s)", esp_err_to_name(sd_err));
+        ESP_LOGW(TAG, "microSD unavailable (%s); continuing without external storage", esp_err_to_name(sd_err));
+    }
+    else
+    {
+        ESP_LOGE(TAG, "microSD initialization failed (%s); continuing without external storage", esp_err_to_name(sd_err));
     }
     INIT_YIELD();
+#else
+    ESP_LOGI(TAG, "Init peripherals step 1: microSD disabled (CONFIG_ENABLE_SDCARD=0); skipping sdcard_init()");
+    logs_panel_add_log("microSD désactivée (menuconfig)");
+#endif
 
     // Yield after synchronous storage probing so IDLE tasks can run before display/touch bring-up.
     vTaskDelay(pdMS_TO_TICKS(1));
