@@ -1,5 +1,11 @@
 menu "Storage"
 
+config ENABLE_SDCARD
+    bool "Enable SD card support"
+    default n
+    help
+        Disable to skip SD card initialization and mount.
+
 config SDCARD_SPI_MOSI_GPIO
     int "SD card SPI MOSI GPIO"
     default 11

@@ -94,6 +94,8 @@ static void sdcard_cleanup(sdcard_state_t *state)
         return;
     }
 
+    bool devices_detached = true;
+
     if (state->mounted && state->card)
     {
         ESP_LOGI(TAG, "Unmounting FATFS from %s", SDCARD_MOUNT_POINT);
@@ -107,6 +109,7 @@ static void sdcard_cleanup(sdcard_state_t *state)
         ESP_LOGI(TAG, "Deinitializing SDSPI slot on host %d", state->host_id);
         sdspi_ch422g_deinit_slot(state->host_id);
         state->slot_initialized = false;
+        devices_detached = true;
     }
 
     // Ensure any lingering device handle is removed before touching the bus
@@ -120,7 +123,7 @@ static void sdcard_cleanup(sdcard_state_t *state)
 
     if (state->bus_initialized)
     {
-        if (state->bus_owned)
+        if (state->bus_owned && devices_detached)
         {
             esp_err_t free_err = spi_bus_free(state->host_id);
             if (free_err != ESP_OK)
@@ -218,14 +221,6 @@ static esp_err_t sdcard_mount(void)
         s_state.bus_owned = true;
     }
 
-    ret = sdspi_ch422g_init_slot(host_id);
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init SDSPI slot (%s)", esp_err_to_name(ret));
-        goto fail;
-    }
-    s_state.slot_initialized = true;
-
     ESP_LOGI(TAG, "Sending idle clocks on host %d before mount", host_id);
 
     ret = sdspi_ch422g_idle_clocks(host_id);
@@ -255,6 +250,8 @@ static esp_err_t sdcard_mount(void)
     {
         ESP_LOGW(TAG, "RAW CMD0 probe: no response (both polarities); continuing without storage if mount fails");
     }
+
+    sdspi_ch422g_deinit_slot(host_id);
 
     sdmmc_host_t host = sdspi_host_ch422g_default();
     host.slot = host_id;
@@ -297,6 +294,7 @@ static esp_err_t sdcard_mount(void)
     s_state.card = card;
     s_card = card;
     s_mounted = true;
+    s_state.slot_initialized = true;
 
     esp_err_t freq_ret = sdspi_host_ch422g_set_card_clk((sdspi_dev_handle_t)host_id, 20000);
     if (freq_ret != ESP_OK)
@@ -317,6 +315,10 @@ fail:
 
 esp_err_t sdcard_init(void)
 {
+#if !CONFIG_ENABLE_SDCARD
+    ESP_LOGI(TAG, "SD disabled by config");
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
     return sdcard_mount();
 }
 

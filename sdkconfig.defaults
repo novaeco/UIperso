@@ -49,4 +49,5 @@ CONFIG_SDCARD_SPI_SCK_GPIO=12
 CONFIG_SDCARD_SPI_CS_GPIO=10
 
 # Storage options
-CONFIG_ENABLE_SDCARD=y
+# Disable SD card by default for UI-only testing; set to y to re-enable storage
+CONFIG_ENABLE_SDCARD=n
