@@ -391,16 +391,6 @@ static void app_init_task(void *arg)
     INIT_YIELD();
 
     ESP_LOGI(TAG, "Init peripherals step 5: LVGL tick source");
-#if LV_TICK_CUSTOM
-    /*
-     * Prevent the historical double-tick panic that used to occur right after
-     * "GT911 ready" when LV_TICK_CUSTOM (LVGL side) was enabled while the
-     * esp_timer-driven lv_tick_inc(1) callback was also running. If a custom
-     * tick is configured, skip the esp_timer source instead of rebooting on an
-     * LVGL assert.
-     */
-    ESP_LOGW(TAG, "LV_TICK_CUSTOM is enabled; skipping esp_timer LVGL tick source to avoid double counting");
-#else
     const esp_timer_create_args_t tick_timer_args = {
         .callback = &lvgl_tick_cb,
         .dispatch_method = ESP_TIMER_TASK,
@@ -421,31 +411,14 @@ static void app_init_task(void *arg)
         }
         else
         {
-            ESP_LOGI(TAG, "LVGL tick: esp_timer 1 ms (LV_TICK_CUSTOM=0)");
+            ESP_LOGI(TAG, "MAIN: lvgl tick started (1ms esp_timer)");
         }
     }
-#endif
-
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");
-    int64_t t_ui = stage_begin("ui_manager_init_step1_theme");
-    esp_err_t ui_err = ui_manager_init_step1_theme();
-    stage_end("ui_manager_init_step1_theme", t_ui);
-    INIT_YIELD();
-
-    if (ui_err == ESP_OK)
-    {
-        t_ui = stage_begin("ui_manager_init_step2_screens");
-        ui_err = ui_manager_init_step2_screens();
-        stage_end("ui_manager_init_step2_screens", t_ui);
-    }
-    INIT_YIELD();
-
-    if (ui_err == ESP_OK)
-    {
-        t_ui = stage_begin("ui_manager_init_step3_finalize");
-        ui_err = ui_manager_init_step3_finalize();
-        stage_end("ui_manager_init_step3_finalize", t_ui);
-    }
+    ESP_LOGI(TAG, "MAIN: ui entrypoint called: ui_manager_init");
+    int64_t t_ui = stage_begin("ui_manager_init");
+    esp_err_t ui_err = ui_manager_init();
+    stage_end("ui_manager_init", t_ui);
 
     if (ui_err != ESP_OK)
     {
@@ -456,6 +429,8 @@ static void app_init_task(void *arg)
     else
     {
         ui_manager_set_degraded(degraded_mode);
+        ESP_LOGI(TAG, "MAIN: ui init done");
+        ESP_LOGI(TAG, "MAIN: active screen=%p", (void *)lv_scr_act());
     }
 
     log_heap_metrics("post-init");
@@ -467,9 +442,9 @@ static void app_init_task(void *arg)
         "lvgl",
         12288,
         NULL,
-        5,
+        6,
         NULL,
-        1);
+        0);
 
     if (lvgl_ok != pdPASS)
     {
@@ -481,21 +456,12 @@ static void app_init_task(void *arg)
 
 static void lvgl_task(void *arg)
 {
-    ESP_LOGI(TAG, "LVGL task running on core %d", xPortGetCoreID());
+    ESP_LOGI("LVGL", "task started on core=%d", xPortGetCoreID());
 
     for (;;)
     {
-        uint32_t wait_ms = lv_timer_handler();
-        if (wait_ms < 5)
-        {
-            wait_ms = 5;
-        }
-        else if (wait_ms > 10)
-        {
-            wait_ms = 10;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(wait_ms));
+        lv_timer_handler();
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 
