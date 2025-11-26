@@ -22,6 +22,7 @@ static const char *TAG = "dashboard";
 static lv_obj_t *heap_label = NULL;
 static lv_obj_t *psram_label = NULL;
 static lv_obj_t *fps_label = NULL;
+static lv_obj_t *heartbeat_label = NULL;
 static lv_obj_t *chart = NULL;
 static lv_chart_series_t *cpu_series = NULL;
 static lv_timer_t *update_timer = NULL;
@@ -122,6 +123,12 @@ static void dashboard_update_cb(lv_timer_t *timer)
     uint32_t smoothed_sample = smoothing_sum / smoothing_count;
 
     lv_chart_set_next_value(chart, cpu_series, (lv_coord_t)smoothed_sample);
+
+    if (heartbeat_label)
+    {
+        uint32_t uptime_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        lv_label_set_text_fmt(heartbeat_label, "BOOT OK - %u ms", (unsigned int)uptime_ms);
+    }
 }
 
 static lv_obj_t *create_card(lv_obj_t *parent)
@@ -159,6 +166,7 @@ lv_obj_t *dashboard_create(void)
     lv_obj_t *chart_title = lv_label_create(chart_card);
     lv_obj_add_style(chart_title, lv_theme_custom_style_label(), LV_PART_MAIN);
     lv_label_set_text(chart_title, "Charge système estimée");
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     chart = lv_chart_create(chart_card);
     lv_obj_set_size(chart, 600, 200);
@@ -176,14 +184,21 @@ lv_obj_t *dashboard_create(void)
     heap_label = lv_label_create(stats_card);
     lv_obj_add_style(heap_label, lv_theme_custom_style_label(), LV_PART_MAIN);
     lv_label_set_text(heap_label, "Heap libre : --");
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     psram_label = lv_label_create(stats_card);
     lv_obj_add_style(psram_label, lv_theme_custom_style_label(), LV_PART_MAIN);
     lv_label_set_text(psram_label, "PSRAM libre : --");
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     fps_label = lv_label_create(stats_card);
     lv_obj_add_style(fps_label, lv_theme_custom_style_label(), LV_PART_MAIN);
     lv_label_set_text(fps_label, "FPS estimé : --");
+    vTaskDelay(pdMS_TO_TICKS(1));
+
+    heartbeat_label = lv_label_create(stats_card);
+    lv_obj_add_style(heartbeat_label, lv_theme_custom_style_label(), LV_PART_MAIN);
+    lv_label_set_text(heartbeat_label, "BOOT OK - -- ms");
 
     if (!update_timer)
     {

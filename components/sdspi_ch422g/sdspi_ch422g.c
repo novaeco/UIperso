@@ -283,6 +283,36 @@ static esp_err_t go_idle_clockout(slot_info_t *slot)
     return ESP_OK;
 }
 
+esp_err_t sdspi_ch422g_idle_clocks(spi_host_device_t host_id)
+{
+    slot_info_t *slot = NULL;
+    esp_err_t ret = ensure_slot_initialized(host_id, &slot);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    ret = spi_device_acquire_bus(slot->spi_handle, pdMS_TO_TICKS(50));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to acquire SPI bus for idle clocks (%s)", esp_err_to_name(ret));
+        return ret;
+    }
+
+    esp_err_t cs_ret = cs_high(slot);
+    if (cs_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to release CS before idle clocks (%s)", esp_err_to_name(cs_ret));
+    }
+
+    ret = go_idle_clockout(slot);
+    cs_ret = cs_high(slot);
+    if (cs_ret != ESP_OK && ret == ESP_OK) {
+        ret = cs_ret;
+    }
+
+    release_bus(slot);
+    spi_device_release_bus(slot->spi_handle);
+    return ret;
+}
+
 static esp_err_t configure_spi_dev(slot_info_t *slot, int clock_speed_hz)
 {
     if (slot->spi_handle) {
