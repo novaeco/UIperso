@@ -1,11 +1,13 @@
 #include "sdcard.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_log_buffer.h" // esp_log_buffer_hex lives here; required for C23/-Werror builds
+#include "esp_timer.h"
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -48,10 +50,42 @@ static const char *TAG = "SDCARD";
 
 static bool s_mounted = false;
 static sdmmc_card_t *s_card = NULL;
+static int64_t s_last_init_start_us = 0;
+
+static void log_stage_timing(const char *stage)
+{
+    int64_t now = esp_timer_get_time();
+    if (s_last_init_start_us == 0)
+    {
+        s_last_init_start_us = now;
+    }
+    int64_t elapsed_ms = (now - s_last_init_start_us) / 1000;
+    ESP_LOGI(TAG, "%s took %lld ms", stage, (long long)elapsed_ms);
+}
 
 static bool sdcard_no_media_error(esp_err_t err)
 {
     return (err == ESP_ERR_NOT_FOUND);
+}
+
+static esp_err_t sdcard_short_probe(spi_host_device_t host_id)
+{
+    sdmmc_command_t cmd = {
+        .opcode = MMC_GO_IDLE_STATE,
+        .arg = 0,
+        .flags = SCF_CMD | SCF_RSP_R1 | SCF_CMD_INIT,
+        .timeout_ms = 20,
+    };
+
+    esp_err_t ret = sdspi_host_ch422g_do_transaction(host_id, &cmd);
+    if (ret == ESP_OK && cmd.response[0] != 0xFF)
+    {
+        ESP_LOGI(TAG, "SD probe response R1=0x%02" PRIx32, cmd.response[0]);
+        return ESP_OK;
+    }
+
+    ESP_LOGW(TAG, "SD probe no response (ret=%s, r1=0x%02" PRIx32 ")", esp_err_to_name(ret), cmd.response[0]);
+    return ESP_ERR_TIMEOUT;
 }
 
 static esp_err_t sdcard_mount(void)
@@ -59,6 +93,8 @@ static esp_err_t sdcard_mount(void)
     if (s_mounted) {
         return ESP_OK;
     }
+
+    s_last_init_start_us = esp_timer_get_time();
 
     if (!ch422g_sdcard_cs_available()) {
         ESP_LOGE(TAG, "CH422G not ready; cannot drive SD CS (EXIO4)");
@@ -134,6 +170,25 @@ static esp_err_t sdcard_mount(void)
     }
     slot_initialized = true;
 
+    log_stage_timing("sdspi slot init");
+
+    int probe_attempts = 2;
+    while (probe_attempts-- > 0)
+    {
+        ret = sdcard_short_probe(host_id);
+        if (ret == ESP_OK)
+        {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    if (ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "microSD absent or unresponsive after short probe; skipping mount");
+        goto fail;
+    }
+
     sdmmc_host_t host = sdspi_host_ch422g_default();
     host.slot = host_id;
     host.max_freq_khz = 400;
@@ -155,6 +210,7 @@ static esp_err_t sdcard_mount(void)
     ESP_LOGI(TAG, "esp_vfs_fat_sdspi_mount start (custom CH422G CS host)");
     ret = esp_vfs_fat_sdspi_mount(SDCARD_MOUNT_POINT, &host, &dev_cfg, &mount_config, &card);
     ESP_LOGI(TAG, "esp_vfs_fat_sdspi_mount result=%s", esp_err_to_name(ret));
+    log_stage_timing("sdspi mount");
 
     if (ret != ESP_OK)
     {
@@ -174,11 +230,15 @@ static esp_err_t sdcard_mount(void)
     s_card = card;
     s_mounted = true;
 
+    log_stage_timing("sd ready");
+
     sdmmc_card_print_info(stdout, card);
     ESP_LOGI(TAG, "microSD mounted OK on %s", SDCARD_MOUNT_POINT);
     return ESP_OK;
 
 fail:
+    (void)ch422g_set_sdcard_cs(false);
+
     if (mounted && card)
     {
         esp_vfs_fat_sdcard_unmount(SDCARD_MOUNT_POINT, card);
@@ -191,6 +251,8 @@ fail:
         sdspi_ch422g_deinit_slot(host_id);
         slot_initialized = false;
     }
+
+    (void)sdspi_host_ch422g_deinit();
 
     if (bus_initialized)
     {

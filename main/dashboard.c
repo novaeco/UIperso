@@ -4,6 +4,10 @@
 
 #include <math.h>
 
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "esp_system.h"
 
@@ -14,6 +18,7 @@
 #define DASHBOARD_UPDATE_PERIOD_MS 750
 #define DASHBOARD_SMOOTHING_WINDOW 8
 
+static const char *TAG = "dashboard";
 static lv_obj_t *heap_label = NULL;
 static lv_obj_t *psram_label = NULL;
 static lv_obj_t *fps_label = NULL;
@@ -134,6 +139,7 @@ static lv_obj_t *create_card(lv_obj_t *parent)
 
 lv_obj_t *dashboard_create(void)
 {
+    int64_t start_us = esp_timer_get_time();
     lv_obj_t *screen = lv_obj_create(NULL);
     lv_obj_remove_style_all(screen);
     lv_obj_add_style(screen, lv_theme_custom_style_screen(), LV_PART_MAIN);
@@ -141,11 +147,13 @@ lv_obj_t *dashboard_create(void)
     lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(screen, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(screen, 18, LV_PART_MAIN);
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     lv_obj_t *title = lv_label_create(screen);
     lv_obj_add_style(title, lv_theme_custom_style_label(), LV_PART_MAIN);
     lv_label_set_text(title, "Dashboard");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_24, LV_PART_MAIN);
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     lv_obj_t *chart_card = create_card(screen);
     lv_obj_t *chart_title = lv_label_create(chart_card);
@@ -162,6 +170,7 @@ lv_obj_t *dashboard_create(void)
     {
         lv_chart_set_value_by_id(chart, cpu_series, i, 20);
     }
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     lv_obj_t *stats_card = create_card(screen);
     heap_label = lv_label_create(stats_card);
@@ -180,6 +189,8 @@ lv_obj_t *dashboard_create(void)
     {
         update_timer = lv_timer_create(dashboard_update_cb, DASHBOARD_UPDATE_PERIOD_MS, NULL);
     }
+
+    ESP_LOGI(TAG, "dashboard_create took %lld ms", (long long)((esp_timer_get_time() - start_us) / 1000));
 
     return screen;
 }

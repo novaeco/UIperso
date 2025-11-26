@@ -46,6 +46,18 @@ static const char *TAG_INIT = "APP_INIT";
 static const char *TAG = "MAIN";
 
 static void app_init_task(void *arg);
+static inline int64_t stage_begin(const char *stage)
+{
+    int64_t ts = esp_timer_get_time();
+    ESP_LOGI(TAG_INIT, "%s start", stage);
+    return ts;
+}
+
+static inline void stage_end(const char *stage, int64_t start_ts)
+{
+    int64_t elapsed_ms = (esp_timer_get_time() - start_ts) / 1000;
+    ESP_LOGI(TAG_INIT, "%s done in %lld ms", stage, (long long)elapsed_ms);
+}
 
 // Reset loop root-cause (panic reason=4) was LVGL tick double-counting when CONFIG_LV_TICK_CUSTOM=1
 // coexisted with the esp_timer-driven lv_tick_inc(1) callback. Keep the custom tick forcefully
@@ -254,7 +266,9 @@ static void app_init_task(void *arg)
     ESP_LOGI(TAG, "Init peripherals step 1: sdcard_init() before RGB panel start");
     // Silence noisy IDF-level errors from the VFS FAT SDMMC helper when the slot is empty.
     esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_NONE);
+    int64_t t_sd = stage_begin("sdcard_init");
     esp_err_t sd_err = sdcard_init();
+    stage_end("sdcard_init", t_sd);
     if (sd_err == ESP_OK)
     {
         ESP_LOGI(TAG, "microSD mounted successfully");
@@ -276,7 +290,9 @@ static void app_init_task(void *arg)
     lv_init();
     ESP_LOGI(TAG, "After lv_init(), before RGB LCD creation");
 
+    int64_t t_rgb = stage_begin("rgb_lcd_init");
     rgb_lcd_init();
+    stage_end("rgb_lcd_init", t_rgb);
     ESP_LOGI(TAG, "RGB LCD init done, retrieving lv_display_t handle");
 
     lv_display_t *disp = rgb_lcd_get_disp();
@@ -381,7 +397,9 @@ static void app_init_task(void *arg)
 #endif
 
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");
+    int64_t t_ui = stage_begin("ui_manager_init");
     esp_err_t ui_err = ui_manager_init();
+    stage_end("ui_manager_init", t_ui);
     if (ui_err != ESP_OK)
     {
         log_non_fatal_error("UI manager init", ui_err);

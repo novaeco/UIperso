@@ -2,6 +2,12 @@
 
 #include <stdbool.h>
 
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+static const char *TAG = "lv_theme_custom";
 static lv_style_t style_screen;
 static lv_style_t style_card;
 static lv_style_t style_label;
@@ -53,7 +59,10 @@ void lv_theme_custom_init(void)
         return;
     }
 
+    int64_t start_us = esp_timer_get_time();
     init_styles();
+
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     lv_obj_t *act = lv_scr_act();
     if (act)
@@ -62,6 +71,7 @@ void lv_theme_custom_init(void)
     }
 
     theme_ready = true;
+    ESP_LOGI(TAG, "lv_theme_custom_init took %lld ms", (long long)((esp_timer_get_time() - start_us) / 1000));
 }
 
 static const lv_style_t *ensure_style_ready(const lv_style_t *style)

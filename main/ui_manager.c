@@ -4,6 +4,9 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "lvgl.h"
 
 #include "dashboard.h"
@@ -251,6 +254,7 @@ esp_err_t ui_manager_init(void)
         return ESP_OK;
     }
 
+    int64_t ui_start = esp_timer_get_time();
     ESP_LOGI(TAG, "ui_manager_init: default disp=%p, degraded=%d", (void *)lv_disp_get_default(), s_degraded);
 
     if (lv_disp_get_default() == NULL)
@@ -259,11 +263,17 @@ esp_err_t ui_manager_init(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    int64_t theme_start = esp_timer_get_time();
     lv_theme_custom_init();
+    ESP_LOGI(TAG, "lv_theme_custom_init duration=%lld ms", (long long)((esp_timer_get_time() - theme_start) / 1000));
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     dashboard_screen = dashboard_create();
+    vTaskDelay(pdMS_TO_TICKS(1));
     system_screen = system_panel_create();
+    vTaskDelay(pdMS_TO_TICKS(1));
     logs_screen = logs_panel_create();
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     if (!dashboard_screen || !system_screen || !logs_screen)
     {
@@ -287,7 +297,7 @@ esp_err_t ui_manager_init(void)
     lv_scr_load(dashboard_screen);
 
     logs_panel_add_log("UI initialisée");
-    ESP_LOGI(TAG, "Interface LVGL prête");
+    ESP_LOGI(TAG, "Interface LVGL prête (total %lld ms)", (long long)((esp_timer_get_time() - ui_start) / 1000));
 
     return ESP_OK;
 }
