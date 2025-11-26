@@ -294,6 +294,78 @@ static esp_err_t go_idle_clockout(slot_info_t *slot)
     return ESP_OK;
 }
 
+esp_err_t sdspi_ch422g_raw_cmd0_probe(spi_host_device_t host_id, bool cs_active_low, uint8_t *out_r1)
+{
+    slot_info_t *slot = NULL;
+    esp_err_t ret = ensure_slot_initialized(host_id, &slot);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    const bool cs_assert_level = cs_active_low;
+    const bool cs_release_level = !cs_assert_level;
+    if (out_r1) {
+        *out_r1 = 0xFF;
+    }
+
+    ret = ch422g_set_sdcard_cs(cs_release_level);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    ret = go_idle_clockout(slot);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    ret = ch422g_set_sdcard_cs(cs_assert_level);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    sdspi_hw_cmd_t cmd;
+    make_hw_cmd_ch422g(MMC_GO_IDLE_STATE, 0, 200, &cmd);
+
+    spi_transaction_t t_cmd = {
+        .length = SDSPI_CMD_R1_SIZE * 8,
+        .tx_buffer = &cmd,
+    };
+    ret = spi_device_polling_transmit(slot->spi_handle, &t_cmd);
+    if (ret != ESP_OK) {
+        (void)ch422g_set_sdcard_cs(cs_release_level);
+        return ret;
+    }
+
+    uint8_t r1 = 0xFF;
+    for (int i = 0; i < 16 && r1 == 0xFF; ++i) {
+        spi_transaction_t t_poll = {
+            .flags = SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA,
+            .length = 8,
+        };
+        t_poll.tx_data[0] = 0xFF;
+        ret = spi_device_polling_transmit(slot->spi_handle, &t_poll);
+        if (ret != ESP_OK) {
+            break;
+        }
+        r1 = t_poll.rx_data[0];
+    }
+
+    if (out_r1) {
+        *out_r1 = r1;
+    }
+
+    if (r1 == 0xFF && ret == ESP_OK) {
+        ret = ESP_ERR_TIMEOUT;
+    }
+
+    esp_err_t cs_ret = ch422g_set_sdcard_cs(cs_release_level);
+    if (cs_ret != ESP_OK && ret == ESP_OK) {
+        ret = cs_ret;
+    }
+    release_bus(slot);
+    return ret;
+}
+
 esp_err_t sdspi_ch422g_idle_clocks(spi_host_device_t host_id)
 {
     slot_info_t *slot = NULL;
@@ -638,18 +710,14 @@ esp_err_t sdspi_host_ch422g_start_command(sdspi_dev_handle_t handle, sdspi_hw_cm
     ESP_LOGV(TAG, "%s: slot=%i, CMD%d, arg=0x%08x flags=0x%x, data=%p, data_size=%i crc=0x%02x",
              __func__, handle, cmd_index, cmd_arg, flags, data, data_size, cmd->crc7);
 
-    esp_err_t ret = spi_device_acquire_bus(slot->spi_handle, portMAX_DELAY);
-    bool bus_acquired = (ret == ESP_OK);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to acquire SPI bus (%s)", esp_err_to_name(ret));
-        return ret;
-    }
+    esp_err_t ret = ESP_OK;
+    bool cs_asserted = false;
 
     // Ensure CS is released before any GO_IDLE clocking.
     ret = cs_high(slot);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to release SD CS via CH422G (%s)", esp_err_to_name(ret));
-        goto cleanup;
+        return ret;
     }
 
     // For CMD0, clock out 80 cycles with CS high before asserting CS and sending the command.
@@ -663,8 +731,9 @@ esp_err_t sdspi_host_ch422g_start_command(sdspi_dev_handle_t handle, sdspi_hw_cm
     ret = cs_low(slot);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to assert SD CS via CH422G (%s)", esp_err_to_name(ret));
-        goto cleanup;
+        return ret;
     }
+    cs_asserted = true;
 
     if (flags & SDSPI_CMD_FLAG_DATA) {
         const bool multi_block = flags & SDSPI_CMD_FLAG_MULTI_BLK;
@@ -678,17 +747,15 @@ esp_err_t sdspi_host_ch422g_start_command(sdspi_dev_handle_t handle, sdspi_hw_cm
         ret = start_command_default(slot, flags, cmd);
     }
 
-cleanup:
-    if (bus_acquired) {
+    if (cs_asserted) {
         esp_err_t cs_ret = cs_high(slot);
         if (cs_ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to deassert SD CS via CH422G (%s)", esp_err_to_name(cs_ret));
             ret = (ret == ESP_OK) ? cs_ret : ret;
         }
-
-        release_bus(slot);
-        spi_device_release_bus(slot->spi_handle);
     }
+
+    release_bus(slot);
 
     if (ret == ESP_OK) {
         if (cmd_index == SD_CRC_ON_OFF) {

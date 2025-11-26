@@ -55,6 +55,7 @@ static int64_t s_last_init_start_us = 0;
 typedef struct
 {
     bool bus_initialized;
+    bool bus_owned;
     bool slot_initialized;
     bool mounted;
     spi_host_device_t host_id;
@@ -63,6 +64,7 @@ typedef struct
 
 static sdcard_state_t s_state = {
     .bus_initialized = false,
+    .bus_owned = false,
     .slot_initialized = false,
     .mounted = false,
     .host_id = CONFIG_SDCARD_SPI_HOST,
@@ -118,12 +120,16 @@ static void sdcard_cleanup(sdcard_state_t *state)
 
     if (state->bus_initialized)
     {
-        esp_err_t free_err = spi_bus_free(state->host_id);
-        if (free_err != ESP_OK)
+        if (state->bus_owned)
         {
-            ESP_LOGW(TAG, "spi_bus_free(%d) failed during cleanup (%s)", state->host_id, esp_err_to_name(free_err));
+            esp_err_t free_err = spi_bus_free(state->host_id);
+            if (free_err != ESP_OK)
+            {
+                ESP_LOGW(TAG, "spi_bus_free(%d) failed during cleanup (%s)", state->host_id, esp_err_to_name(free_err));
+            }
         }
         state->bus_initialized = false;
+        state->bus_owned = false;
     }
 
     (void)ch422g_set_sdcard_cs(false);
@@ -198,6 +204,8 @@ static esp_err_t sdcard_mount(void)
     if (ret == ESP_ERR_INVALID_STATE)
     {
         ESP_LOGW(TAG, "SPI bus already initialized, reusing");
+        s_state.bus_initialized = true;
+        s_state.bus_owned = false;
     }
     else if (ret != ESP_OK)
     {
@@ -207,6 +215,7 @@ static esp_err_t sdcard_mount(void)
     else
     {
         s_state.bus_initialized = true;
+        s_state.bus_owned = true;
     }
 
     ret = sdspi_ch422g_init_slot(host_id);
@@ -226,6 +235,26 @@ static esp_err_t sdcard_mount(void)
     }
 
     log_stage_timing("sdspi slot init");
+
+    uint8_t cmd0_r1 = 0xFF;
+    ESP_LOGI(TAG, "RAW CMD0 probe (CS active-low)");
+    esp_err_t cmd0_ret = sdspi_ch422g_raw_cmd0_probe(host_id, true, &cmd0_r1);
+    if (cmd0_ret != ESP_OK || cmd0_r1 == 0xFF)
+    {
+        uint8_t cmd0_r1_high = 0xFF;
+        ESP_LOGW(TAG, "RAW CMD0 active-low failed (ret=%s, r1=0x%02x); retry active-high", esp_err_to_name(cmd0_ret), cmd0_r1);
+        cmd0_ret = sdspi_ch422g_raw_cmd0_probe(host_id, false, &cmd0_r1_high);
+        cmd0_r1 = cmd0_r1_high;
+    }
+
+    if (cmd0_r1 != 0xFF)
+    {
+        ESP_LOGI(TAG, "RAW CMD0 response: r1=0x%02x", cmd0_r1);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "RAW CMD0 probe: no response (both polarities); continuing without storage if mount fails");
+    }
 
     sdmmc_host_t host = sdspi_host_ch422g_default();
     host.slot = host_id;
