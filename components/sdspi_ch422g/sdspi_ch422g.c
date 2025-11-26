@@ -263,6 +263,10 @@ static esp_err_t get_block_buf(slot_info_t *slot, uint8_t **out_buf)
 
 static void release_bus(slot_info_t *slot)
 {
+    if (slot == NULL || slot->spi_handle == NULL) {
+        return;
+    }
+
     spi_transaction_t t = {
         .flags = SPI_TRANS_USE_RXDATA | SPI_TRANS_USE_TXDATA,
         .length = 8,
@@ -701,6 +705,9 @@ esp_err_t sdspi_host_ch422g_start_command(sdspi_dev_handle_t handle, sdspi_hw_cm
                                          uint32_t data_size, int flags)
 {
     slot_info_t *slot = get_slot_info(handle);
+    esp_err_t ret = ESP_OK;
+    bool cs_asserted = false;
+
     if (slot == NULL) {
         esp_err_t init_ret = ensure_slot_initialized((int)handle, &slot);
         if (init_ret != ESP_OK) {
@@ -709,10 +716,12 @@ esp_err_t sdspi_host_ch422g_start_command(sdspi_dev_handle_t handle, sdspi_hw_cm
     }
     if (!ch422g_sdcard_cs_available()) {
         ESP_LOGE(TAG, "CH422G not available; cannot start SD command");
-        return ESP_ERR_INVALID_STATE;
+        ret = ESP_ERR_INVALID_STATE;
+        goto cleanup;
     }
     if (card_missing(slot)) {
-        return ESP_ERR_NOT_FOUND;
+        ret = ESP_ERR_NOT_FOUND;
+        goto cleanup;
     }
 
     int cmd_index = cmd->cmd_index;
@@ -723,14 +732,11 @@ esp_err_t sdspi_host_ch422g_start_command(sdspi_dev_handle_t handle, sdspi_hw_cm
     ESP_LOGV(TAG, "%s: slot=%i, CMD%d, arg=0x%08x flags=0x%x, data=%p, data_size=%i crc=0x%02x",
              __func__, handle, cmd_index, cmd_arg, flags, data, data_size, cmd->crc7);
 
-    esp_err_t ret = ESP_OK;
-    bool cs_asserted = false;
-
     // Ensure CS is released before any GO_IDLE clocking.
     ret = cs_high(slot);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to release SD CS via CH422G (%s)", esp_err_to_name(ret));
-        return ret;
+        goto cleanup;
     }
 
     // For CMD0, clock out 80 cycles with CS high before asserting CS and sending the command.
@@ -744,7 +750,7 @@ esp_err_t sdspi_host_ch422g_start_command(sdspi_dev_handle_t handle, sdspi_hw_cm
     ret = cs_low(slot);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to assert SD CS via CH422G (%s)", esp_err_to_name(ret));
-        return ret;
+        goto cleanup;
     }
     cs_asserted = true;
 
