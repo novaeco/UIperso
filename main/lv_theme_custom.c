@@ -28,6 +28,7 @@ static void init_styles(void)
     lv_style_set_pad_all(&style_card, 16);
     lv_style_set_border_width(&style_card, 1);
     lv_style_set_border_color(&style_card, lv_color_hex(0x2C3440));
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     lv_style_init(&style_label);
     lv_style_set_text_color(&style_label, lv_color_hex(0xF3F6FF));
@@ -42,6 +43,7 @@ static void init_styles(void)
     lv_style_set_pad_right(&style_button, 8);
     lv_style_set_pad_top(&style_button, 4);
     lv_style_set_pad_bottom(&style_button, 4);
+    vTaskDelay(pdMS_TO_TICKS(1));
 
     lv_style_init(&style_button_active);
     lv_style_set_bg_color(&style_button_active, lv_color_hex(0x4EA1FF));

@@ -9,6 +9,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "esp_task_wdt.h"
 #include "lvgl.h"
 #include "driver/i2c_master.h"
 
@@ -46,6 +47,13 @@ static const char *TAG_INIT = "APP_INIT";
 static const char *TAG = "MAIN";
 
 static void app_init_task(void *arg);
+static void lvgl_task(void *arg);
+
+#define INIT_YIELD()            \
+    do {                        \
+        vTaskDelay(pdMS_TO_TICKS(1)); \
+        esp_task_wdt_reset();   \
+    } while (0)
 static inline int64_t stage_begin(const char *stage)
 {
     int64_t ts = esp_timer_get_time();
@@ -207,10 +215,12 @@ static void app_init_task(void *arg)
     esp_log_level_set("*", ESP_LOG_INFO);
     ESP_LOGI(TAG, "ESP32-S3 UI phase 4 starting");
     log_reset_diagnostics();
+    INIT_YIELD();
 
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
     ESP_LOGI(TAG, "Chip model %d, %d core(s), revision %d", chip_info.model, chip_info.cores, chip_info.revision);
+    INIT_YIELD();
 
     esp_err_t ch_err = ch422g_init();
     if (ch_err != ESP_OK)
@@ -219,8 +229,10 @@ static void app_init_task(void *arg)
         degraded_mode = true;
         ui_manager_set_degraded(true);
     }
+    INIT_YIELD();
 
     i2c_scan_bus(i2c_bus_shared_handle());
+    INIT_YIELD();
 
     if (ch422g_is_available())
     {
@@ -238,6 +250,7 @@ static void app_init_task(void *arg)
             logs_panel_add_log("LCD_VDD_EN activé, délai %d ms", LCD_POWER_STABILIZE_DELAY_MS);
             vTaskDelay(pdMS_TO_TICKS(LCD_POWER_STABILIZE_DELAY_MS));
         }
+        INIT_YIELD();
 
         esp_err_t bl_err = ch422g_set_backlight(true);
         if (bl_err != ESP_OK)
@@ -282,6 +295,7 @@ static void app_init_task(void *arg)
     {
         ESP_LOGE(TAG, "microSD initialization failed (%s)", esp_err_to_name(sd_err));
     }
+    INIT_YIELD();
 
     // Yield after synchronous storage probing so IDLE tasks can run before display/touch bring-up.
     vTaskDelay(pdMS_TO_TICKS(1));
@@ -289,11 +303,13 @@ static void app_init_task(void *arg)
     // LVGL + display must be ready before GT911 so the indev can bind to the default display
     lv_init();
     ESP_LOGI(TAG, "After lv_init(), before RGB LCD creation");
+    INIT_YIELD();
 
     int64_t t_rgb = stage_begin("rgb_lcd_init");
     rgb_lcd_init();
     stage_end("rgb_lcd_init", t_rgb);
     ESP_LOGI(TAG, "RGB LCD init done, retrieving lv_display_t handle");
+    INIT_YIELD();
 
     lv_display_t *disp = rgb_lcd_get_disp();
     if (disp == NULL)
@@ -328,7 +344,7 @@ static void app_init_task(void *arg)
     ESP_LOGI(TAG, "After GT911 init, proceeding with peripherals");
 
     // Avoid monopolizing CPU0 around synchronous peripheral inits.
-    vTaskDelay(pdMS_TO_TICKS(1));
+    INIT_YIELD();
 
     ESP_LOGI(TAG, "Init peripherals step 2: can_bus_init()");
 
@@ -346,6 +362,7 @@ static void app_init_task(void *arg)
     {
         ESP_LOGI(TAG, "CAN init OK, bus actif");
     }
+    INIT_YIELD();
 
     ESP_LOGI(TAG, "Init peripherals step 3: rs485_init()");
     esp_err_t rs485_err = rs485_init();
@@ -355,10 +372,12 @@ static void app_init_task(void *arg)
         degraded_mode = true;
         ui_manager_set_degraded(true);
     }
+    INIT_YIELD();
 
     ESP_LOGI(TAG, "Init peripherals step 4: cs8501_init()");
     cs8501_init();
     ESP_LOGI(TAG, "Battery voltage: %.2f V, charging: %s", cs8501_get_battery_voltage(), cs8501_is_charging() ? "yes" : "no");
+    INIT_YIELD();
 
     ESP_LOGI(TAG, "Init peripherals step 5: LVGL tick source");
 #if LV_TICK_CUSTOM
@@ -396,10 +415,35 @@ static void app_init_task(void *arg)
     }
 #endif
 
+    ESP_LOGI(TAG, "Starting dedicated LVGL task on CPU0");
+    BaseType_t lvgl_ok = xTaskCreatePinnedToCore(lvgl_task, "lvgl", 8192, NULL, 5, NULL, 0);
+    if (lvgl_ok != pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create LVGL task");
+    }
+    INIT_YIELD();
+
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");
-    int64_t t_ui = stage_begin("ui_manager_init");
-    esp_err_t ui_err = ui_manager_init();
-    stage_end("ui_manager_init", t_ui);
+    int64_t t_ui = stage_begin("ui_manager_init_step1_theme");
+    esp_err_t ui_err = ui_manager_init_step1_theme();
+    stage_end("ui_manager_init_step1_theme", t_ui);
+    INIT_YIELD();
+
+    if (ui_err == ESP_OK)
+    {
+        t_ui = stage_begin("ui_manager_init_step2_screens");
+        ui_err = ui_manager_init_step2_screens();
+        stage_end("ui_manager_init_step2_screens", t_ui);
+    }
+    INIT_YIELD();
+
+    if (ui_err == ESP_OK)
+    {
+        t_ui = stage_begin("ui_manager_init_step3_finalize");
+        ui_err = ui_manager_init_step3_finalize();
+        stage_end("ui_manager_init_step3_finalize", t_ui);
+    }
+
     if (ui_err != ESP_OK)
     {
         log_non_fatal_error("UI manager init", ui_err);
@@ -414,9 +458,21 @@ static void app_init_task(void *arg)
     log_heap_metrics("post-init");
 
     ESP_LOGI(TAG_INIT, "app_init_task done");
-    while (true)
+    vTaskDelete(NULL);
+}
+
+static void lvgl_task(void *arg)
+{
+    (void)arg;
+    ESP_LOGI("LVGL", "lvgl_task starting on core=%d", xPortGetCoreID());
+
+    for (;;)
     {
-        lv_timer_handler();
-        vTaskDelay(pdMS_TO_TICKS(10));
+        uint32_t wait = lv_timer_handler();
+        if (wait > 20)
+        {
+            wait = 20;
+        }
+        vTaskDelay(pdMS_TO_TICKS(wait));
     }
 }

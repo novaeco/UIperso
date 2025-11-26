@@ -40,6 +40,9 @@ static lv_obj_t *system_alert = NULL;
 static lv_obj_t *logs_alert = NULL;
 static bool s_degraded = false;
 static bool s_ui_ready = false;
+static int64_t s_ui_init_start_us = 0;
+
+#define UI_INIT_YIELD() vTaskDelay(pdMS_TO_TICKS(1))
 
 static void degraded_details_event_cb(lv_event_t *e)
 {
@@ -246,7 +249,7 @@ void ui_manager_set_degraded(bool degraded)
     }
 }
 
-esp_err_t ui_manager_init(void)
+esp_err_t ui_manager_init_step1_theme(void)
 {
     if (s_ui_ready)
     {
@@ -254,8 +257,12 @@ esp_err_t ui_manager_init(void)
         return ESP_OK;
     }
 
-    int64_t ui_start = esp_timer_get_time();
-    ESP_LOGI(TAG, "ui_manager_init: default disp=%p, degraded=%d", (void *)lv_disp_get_default(), s_degraded);
+    ESP_LOGI(TAG, "ui_manager_init_step1_theme: default disp=%p, degraded=%d", (void *)lv_disp_get_default(), s_degraded);
+
+    if (s_ui_init_start_us == 0)
+    {
+        s_ui_init_start_us = esp_timer_get_time();
+    }
 
     if (lv_disp_get_default() == NULL)
     {
@@ -266,19 +273,43 @@ esp_err_t ui_manager_init(void)
     int64_t theme_start = esp_timer_get_time();
     lv_theme_custom_init();
     ESP_LOGI(TAG, "lv_theme_custom_init duration=%lld ms", (long long)((esp_timer_get_time() - theme_start) / 1000));
-    vTaskDelay(pdMS_TO_TICKS(1));
+    UI_INIT_YIELD();
+    return ESP_OK;
+}
+
+esp_err_t ui_manager_init_step2_screens(void)
+{
+    if (s_ui_ready)
+    {
+        return ESP_OK;
+    }
 
     dashboard_screen = dashboard_create();
-    vTaskDelay(pdMS_TO_TICKS(1));
+    UI_INIT_YIELD();
     system_screen = system_panel_create();
-    vTaskDelay(pdMS_TO_TICKS(1));
+    UI_INIT_YIELD();
     logs_screen = logs_panel_create();
-    vTaskDelay(pdMS_TO_TICKS(1));
+    UI_INIT_YIELD();
 
     if (!dashboard_screen || !system_screen || !logs_screen)
     {
         ESP_LOGE(TAG, "Failed to create one or more screens (dashboard/system/logs)");
         return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+esp_err_t ui_manager_init_step3_finalize(void)
+{
+    if (s_ui_ready)
+    {
+        return ESP_OK;
+    }
+
+    if (!dashboard_screen || !system_screen || !logs_screen)
+    {
+        ESP_LOGE(TAG, "ui_manager_init_step3_finalize called without screens ready");
+        return ESP_ERR_INVALID_STATE;
     }
 
     create_navbar(dashboard_screen);
@@ -297,7 +328,39 @@ esp_err_t ui_manager_init(void)
     lv_scr_load(dashboard_screen);
 
     logs_panel_add_log("UI initialisée");
-    ESP_LOGI(TAG, "Interface LVGL prête (total %lld ms)", (long long)((esp_timer_get_time() - ui_start) / 1000));
+    if (s_ui_init_start_us == 0)
+    {
+        s_ui_init_start_us = esp_timer_get_time();
+    }
+    int64_t total_ms = (esp_timer_get_time() - s_ui_init_start_us) / 1000;
+    ESP_LOGI(TAG, "Interface LVGL prête (total %lld ms)", (long long)total_ms);
 
+    return ESP_OK;
+}
+
+esp_err_t ui_manager_init(void)
+{
+    int64_t ui_start = esp_timer_get_time();
+    esp_err_t err = ui_manager_init_step1_theme();
+    if (err != ESP_OK)
+    {
+        return err;
+    }
+
+    UI_INIT_YIELD();
+    err = ui_manager_init_step2_screens();
+    if (err != ESP_OK)
+    {
+        return err;
+    }
+
+    UI_INIT_YIELD();
+    err = ui_manager_init_step3_finalize();
+    if (err != ESP_OK)
+    {
+        return err;
+    }
+
+    ESP_LOGI(TAG, "ui_manager_init total %lld ms", (long long)((esp_timer_get_time() - ui_start) / 1000));
     return ESP_OK;
 }

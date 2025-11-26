@@ -52,6 +52,23 @@ static bool s_mounted = false;
 static sdmmc_card_t *s_card = NULL;
 static int64_t s_last_init_start_us = 0;
 
+typedef struct
+{
+    bool bus_initialized;
+    bool slot_initialized;
+    bool mounted;
+    spi_host_device_t host_id;
+    sdmmc_card_t *card;
+} sdcard_state_t;
+
+static sdcard_state_t s_state = {
+    .bus_initialized = false,
+    .slot_initialized = false,
+    .mounted = false,
+    .host_id = CONFIG_SDCARD_SPI_HOST,
+    .card = NULL,
+};
+
 static void log_stage_timing(const char *stage)
 {
     int64_t now = esp_timer_get_time();
@@ -68,24 +85,40 @@ static bool sdcard_no_media_error(esp_err_t err)
     return (err == ESP_ERR_NOT_FOUND);
 }
 
-static esp_err_t sdcard_short_probe(spi_host_device_t host_id)
+static void sdcard_cleanup(sdcard_state_t *state)
 {
-    sdmmc_command_t cmd = {
-        .opcode = MMC_GO_IDLE_STATE,
-        .arg = 0,
-        .flags = SCF_CMD | SCF_RSP_R1 | SCF_CMD_INIT,
-        .timeout_ms = 20,
-    };
-
-    esp_err_t ret = sdspi_host_ch422g_do_transaction(host_id, &cmd);
-    if (ret == ESP_OK && cmd.response[0] != 0xFF)
+    if (state == NULL)
     {
-        ESP_LOGI(TAG, "SD probe response R1=0x%02" PRIx32, cmd.response[0]);
-        return ESP_OK;
+        return;
     }
 
-    ESP_LOGW(TAG, "SD probe no response (ret=%s, r1=0x%02" PRIx32 ")", esp_err_to_name(ret), cmd.response[0]);
-    return ESP_ERR_TIMEOUT;
+    if (state->mounted && state->card)
+    {
+        ESP_LOGI(TAG, "Unmounting FATFS from %s", SDCARD_MOUNT_POINT);
+        esp_vfs_fat_sdcard_unmount(SDCARD_MOUNT_POINT, state->card);
+        state->mounted = false;
+        state->card = NULL;
+    }
+
+    if (state->slot_initialized)
+    {
+        sdspi_ch422g_deinit_slot(state->host_id);
+        state->slot_initialized = false;
+    }
+
+    (void)sdspi_host_ch422g_deinit();
+
+    if (state->bus_initialized)
+    {
+        esp_err_t free_err = spi_bus_free(state->host_id);
+        if (free_err != ESP_OK)
+        {
+            ESP_LOGW(TAG, "spi_bus_free(%d) failed during cleanup (%s)", state->host_id, esp_err_to_name(free_err));
+        }
+        state->bus_initialized = false;
+    }
+
+    (void)ch422g_set_sdcard_cs(false);
 }
 
 static esp_err_t sdcard_mount(void)
@@ -102,9 +135,7 @@ static esp_err_t sdcard_mount(void)
     }
 
     const spi_host_device_t host_id = CONFIG_SDCARD_SPI_HOST;
-    bool bus_initialized = false;
-    bool slot_initialized = false;
-    bool mounted = false;
+    s_state.host_id = host_id;
     sdmmc_card_t *card = NULL;
 
     gpio_set_pull_mode(CONFIG_SDCARD_SPI_MISO_GPIO, GPIO_PULLUP_ONLY);
@@ -159,7 +190,7 @@ static esp_err_t sdcard_mount(void)
     }
     else
     {
-        bus_initialized = true;
+        s_state.bus_initialized = true;
     }
 
     ret = sdspi_ch422g_init_slot(host_id);
@@ -168,26 +199,15 @@ static esp_err_t sdcard_mount(void)
         ESP_LOGE(TAG, "Failed to init SDSPI slot (%s)", esp_err_to_name(ret));
         goto fail;
     }
-    slot_initialized = true;
+    s_state.slot_initialized = true;
 
-    log_stage_timing("sdspi slot init");
-
-    int probe_attempts = 2;
-    while (probe_attempts-- > 0)
-    {
-        ret = sdcard_short_probe(host_id);
-        if (ret == ESP_OK)
-        {
-            break;
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-
+    ret = sdspi_ch422g_idle_clocks(host_id);
     if (ret != ESP_OK)
     {
-        ESP_LOGW(TAG, "microSD absent or unresponsive after short probe; skipping mount");
-        goto fail;
+        ESP_LOGW(TAG, "Failed to send idle clocks before mount (%s)", esp_err_to_name(ret));
     }
+
+    log_stage_timing("sdspi slot init");
 
     sdmmc_host_t host = sdspi_host_ch422g_default();
     host.slot = host_id;
@@ -226,9 +246,16 @@ static esp_err_t sdcard_mount(void)
         goto fail;
     }
 
-    mounted = true;
+    s_state.mounted = true;
+    s_state.card = card;
     s_card = card;
     s_mounted = true;
+
+    esp_err_t freq_ret = sdspi_host_ch422g_set_card_clk((sdspi_dev_handle_t)host_id, 20000);
+    if (freq_ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to raise SD clock to 20 MHz (%s)", esp_err_to_name(freq_ret));
+    }
 
     log_stage_timing("sd ready");
 
@@ -237,29 +264,7 @@ static esp_err_t sdcard_mount(void)
     return ESP_OK;
 
 fail:
-    (void)ch422g_set_sdcard_cs(false);
-
-    if (mounted && card)
-    {
-        esp_vfs_fat_sdcard_unmount(SDCARD_MOUNT_POINT, card);
-        mounted = false;
-        card = NULL;
-    }
-
-    if (slot_initialized)
-    {
-        sdspi_ch422g_deinit_slot(host_id);
-        slot_initialized = false;
-    }
-
-    (void)sdspi_host_ch422g_deinit();
-
-    if (bus_initialized)
-    {
-        spi_bus_free(host_id);
-        bus_initialized = false;
-    }
-
+    sdcard_cleanup(&s_state);
     return ret;
 }
 
