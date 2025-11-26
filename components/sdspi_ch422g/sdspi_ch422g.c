@@ -523,10 +523,13 @@ esp_err_t sdspi_ch422g_init_slot(spi_host_device_t host_id)
 
 static esp_err_t deinit_slot(slot_info_t *slot)
 {
+    esp_err_t ret = ESP_OK;
+
     if (slot->spi_handle) {
         esp_err_t rem_ret = spi_bus_remove_device(slot->spi_handle);
         if (rem_ret != ESP_OK) {
             ESP_LOGW(TAG, "Host %d: spi_bus_remove_device failed during deinit (%s)", slot->host_id, esp_err_to_name(rem_ret));
+            ret = rem_ret;
         } else {
             ESP_LOGI(TAG, "Host %d: SPI device removed", slot->host_id);
             if (s_sd_dev == slot->spi_handle) {
@@ -538,12 +541,19 @@ static esp_err_t deinit_slot(slot_info_t *slot)
     }
 
     if (slot->bus_initialized_by_driver) {
-        esp_err_t free_ret = spi_bus_free(slot->host_id);
-        if (free_ret != ESP_OK) {
-            ESP_LOGW(TAG, "Host %d: spi_bus_free failed during deinit (%s)", slot->host_id, esp_err_to_name(free_ret));
+        if (slot->spi_handle != NULL && slot->device_attached) {
+            ESP_LOGW(TAG, "Host %d: skipping spi_bus_free because device is still attached", slot->host_id);
         } else {
-            ESP_LOGI(TAG, "Host %d: SPI bus freed", slot->host_id);
-            s_bus_initialized_by_driver[slot->host_id] = false;
+            esp_err_t free_ret = spi_bus_free(slot->host_id);
+            if (free_ret != ESP_OK) {
+                ESP_LOGW(TAG, "Host %d: spi_bus_free failed during deinit (%s)", slot->host_id, esp_err_to_name(free_ret));
+                if (ret == ESP_OK) {
+                    ret = free_ret;
+                }
+            } else {
+                ESP_LOGI(TAG, "Host %d: SPI bus freed", slot->host_id);
+                s_bus_initialized_by_driver[slot->host_id] = false;
+            }
         }
     }
 
@@ -555,10 +565,13 @@ static esp_err_t deinit_slot(slot_info_t *slot)
     esp_err_t cs_ret = cs_high(slot);
     if (cs_ret != ESP_OK) {
         ESP_LOGW(TAG, "Host %d: failed to release CS during deinit (%s)", slot->host_id, esp_err_to_name(cs_ret));
+        if (ret == ESP_OK) {
+            ret = cs_ret;
+        }
     }
 
     free(slot);
-    return ESP_OK;
+    return ret;
 }
 
 esp_err_t sdspi_host_ch422g_remove_device(sdspi_dev_handle_t handle)
@@ -747,6 +760,7 @@ esp_err_t sdspi_host_ch422g_start_command(sdspi_dev_handle_t handle, sdspi_hw_cm
         ret = start_command_default(slot, flags, cmd);
     }
 
+cleanup:
     if (cs_asserted) {
         esp_err_t cs_ret = cs_high(slot);
         if (cs_ret != ESP_OK) {
