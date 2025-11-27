@@ -1,5 +1,6 @@
 #include "ui_manager.h"
 
+#include <inttypes.h>
 #include <stdint.h>
 
 #include "esp_log.h"
@@ -226,7 +227,7 @@ void ui_manager_tick_1s(void)
     {
         const uint32_t flush = rgb_lcd_flush_count_get();
         const uint32_t uptime = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-        lv_label_set_text_fmt(s_heartbeat_label, "uptime %us | flush %u", uptime, flush);
+        lv_label_set_text_fmt(s_heartbeat_label, "uptime %" PRIu32 "s | flush %" PRIu32, uptime, flush);
     }
 }
 

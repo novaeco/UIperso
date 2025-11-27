@@ -3,6 +3,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "sdkconfig.h"
+#include "project_config_compat.h"
 
 #include "ch422g.h"
 #include "cs8501.h"

@@ -2,6 +2,9 @@
 #include <math.h>
 #include <stdbool.h>
 
+#include "sdkconfig.h"
+#include "project_config_compat.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_chip_info.h"
@@ -20,7 +23,6 @@
 #if CONFIG_ENABLE_SDCARD
 #include "sdcard.h"
 #endif
-#include "sdkconfig.h"
 
 #include "can_driver.h"
 #include "cs8501.h"
@@ -51,12 +53,15 @@ static const char *TAG_LVGL = "LVGL";
 static void app_init_task(void *arg);
 static void log_build_info(void);
 static void log_option_state(void);
+static void update_ui_mode_from_status(void);
 static void lvgl_task(void *arg);
 static void lvgl_runtime_start(lv_display_t *disp);
 static void exio4_toggle_selftest(void);
 static void log_storage_state(bool storage_available);
 static void publish_hw_status(bool i2c_ok, bool ch422g_ok, bool gt911_ok, bool touch_available);
+#if CONFIG_ENABLE_CAN
 static void can_rx_task(void *arg);
+#endif
 
 #define INIT_YIELD()            \
     do {                        \
@@ -200,7 +205,9 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
 
 static esp_timer_handle_t s_lvgl_tick_timer = NULL;
 static TaskHandle_t s_lvgl_task_handle = NULL;
+#if CONFIG_ENABLE_CAN
 static TaskHandle_t s_can_rx_task_handle = NULL;
+#endif
 
 static void lvgl_tick_cb(void *arg)
 {
@@ -272,6 +279,7 @@ static void log_heap_metrics(const char *stage)
                        (unsigned int)psram_min);
 }
 
+#if CONFIG_ENABLE_CAN
 static void can_rx_task(void *arg)
 {
     (void)arg;
@@ -311,6 +319,7 @@ static void can_rx_task(void *arg)
         }
     }
 }
+#endif
 
 void app_main(void)
 {

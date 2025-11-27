@@ -1,0 +1,17 @@
+#pragma once
+
+#ifndef CONFIG_ENABLE_SDCARD
+#define CONFIG_ENABLE_SDCARD 0
+#endif
+
+#ifndef CONFIG_I2C_SCAN_AT_BOOT
+#define CONFIG_I2C_SCAN_AT_BOOT 0
+#endif
+
+#ifndef CONFIG_ENABLE_CAN
+#define CONFIG_ENABLE_CAN 0
+#endif
+
+#ifndef CONFIG_ENABLE_RS485
+#define CONFIG_ENABLE_RS485 0
+#endif
