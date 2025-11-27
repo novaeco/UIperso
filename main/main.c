@@ -45,6 +45,8 @@ static const char *TAG_LVGL = "LVGL";
 
 static void app_init_task(void *arg);
 static void lvgl_task(void *arg);
+static void lvgl_runtime_start(lv_display_t *disp);
+static void ui_create_smoke_screen(void);
 static void exio4_toggle_selftest(void);
 
 #define INIT_YIELD()            \
@@ -166,6 +168,7 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
 }
 
 static esp_timer_handle_t s_lvgl_tick_timer = NULL;
+static TaskHandle_t s_lvgl_task_handle = NULL;
 
 static void lvgl_tick_cb(void *arg)
 {
@@ -347,6 +350,8 @@ static void app_init_task(void *arg)
     {
         lv_display_set_default(disp);
         ESP_LOGI(TAG, "MAIN: default LVGL display set to %p", (void *)disp);
+        lvgl_runtime_start(disp);
+        ui_create_smoke_screen();
     }
 
 #if CONFIG_ENABLE_GT911
@@ -408,52 +413,6 @@ static void app_init_task(void *arg)
     ESP_LOGI(TAG, "Battery voltage: %.2f V, charging: %s", cs8501_get_battery_voltage(), cs8501_is_charging() ? "yes" : "no");
     INIT_YIELD();
 
-    ESP_LOGI(TAG, "Init peripherals step 5: LVGL tick source");
-    const esp_timer_create_args_t tick_timer_args = {
-        .callback = &lvgl_tick_cb,
-        .dispatch_method = ESP_TIMER_TASK,
-        .name = "lv_tick",
-    };
-    if (s_lvgl_tick_timer == NULL)
-    {
-        esp_err_t timer_err = esp_timer_create(&tick_timer_args, &s_lvgl_tick_timer);
-        if (timer_err != ESP_OK)
-        {
-            ESP_LOGE(TAG_LVGL, "Failed to create LVGL tick timer (%s)", esp_err_to_name(timer_err));
-        }
-        else
-        {
-            timer_err = esp_timer_start_periodic(s_lvgl_tick_timer, 1000);
-            if (timer_err != ESP_OK)
-            {
-                ESP_LOGE(TAG_LVGL, "Failed to start LVGL tick timer (%s)", esp_err_to_name(timer_err));
-            }
-            else
-            {
-                ESP_LOGI(TAG_LVGL, "tick started (1ms)");
-            }
-        }
-    }
-    else
-    {
-        ESP_LOGW(TAG_LVGL, "LVGL tick timer already created; skipping");
-    }
-
-    ESP_LOGI(TAG_INIT, "app_init_task continuing: creating LVGL task on core %d", 1);
-    BaseType_t lvgl_ok = xTaskCreatePinnedToCore(
-        lvgl_task,
-        "lvgl",
-        12288,
-        NULL,
-        6,
-        NULL,
-        1);
-
-    if (lvgl_ok != pdPASS)
-    {
-        ESP_LOGE(TAG_INIT, "Failed to create LVGL task; stopping app_init_task");
-    }
-
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");
     ESP_LOGI(TAG, "UI: entrypoint called: ui_manager_init");
     int64_t t_ui = stage_begin("ui_manager_init");
@@ -481,7 +440,8 @@ static void app_init_task(void *arg)
 
 static void lvgl_task(void *arg)
 {
-    ESP_LOGI(TAG_LVGL, "task started on core=%d", xPortGetCoreID());
+    ESP_LOGI(TAG_LVGL, "task started");
+    ESP_LOGI(TAG_LVGL, "task pinned core=%d", xPortGetCoreID());
     int64_t last_alive_log_us = esp_timer_get_time();
 
     for (;;)
@@ -501,6 +461,83 @@ static void lvgl_task(void *arg)
 
         vTaskDelay(pdMS_TO_TICKS(wait_ms));
     }
+}
+
+static void lvgl_runtime_start(lv_display_t *disp)
+{
+    (void)disp;
+    ESP_LOGI(TAG, "Init peripherals step 5: LVGL tick source");
+
+    const esp_timer_create_args_t tick_timer_args = {
+        .callback = &lvgl_tick_cb,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "lv_tick",
+    };
+
+    if (s_lvgl_tick_timer == NULL)
+    {
+        esp_err_t timer_err = esp_timer_create(&tick_timer_args, &s_lvgl_tick_timer);
+        if (timer_err != ESP_OK)
+        {
+            ESP_LOGE(TAG_LVGL, "Failed to create LVGL tick timer (%s)", esp_err_to_name(timer_err));
+        }
+        else
+        {
+            ESP_LOGI(TAG_LVGL, "tick create ok");
+            timer_err = esp_timer_start_periodic(s_lvgl_tick_timer, 1000);
+            if (timer_err != ESP_OK)
+            {
+                ESP_LOGE(TAG_LVGL, "Failed to start LVGL tick timer (%s)", esp_err_to_name(timer_err));
+            }
+            else
+            {
+                ESP_LOGI(TAG_LVGL, "tick started (1ms)");
+            }
+        }
+    }
+    else
+    {
+        ESP_LOGW(TAG_LVGL, "LVGL tick timer already created; skipping");
+    }
+
+    if (s_lvgl_task_handle == NULL)
+    {
+        ESP_LOGI(TAG_INIT, "app_init_task continuing: creating LVGL task on core %d", 1);
+        BaseType_t lvgl_ok = xTaskCreatePinnedToCore(
+            lvgl_task,
+            "lvgl",
+            12288,
+            NULL,
+            6,
+            &s_lvgl_task_handle,
+            1);
+
+        if (lvgl_ok != pdPASS)
+        {
+            ESP_LOGE(TAG_INIT, "Failed to create LVGL task; stopping app_init_task");
+        }
+    }
+    else
+    {
+        ESP_LOGW(TAG_LVGL, "LVGL task already running; skipping creation");
+    }
+}
+
+static void ui_create_smoke_screen(void)
+{
+    lv_obj_t *screen = lv_scr_act();
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x202020), 0);
+    lv_obj_set_style_bg_opa(screen, LV_OPA_100, 0);
+
+    lv_obj_t *label = lv_label_create(screen);
+    lv_label_set_text(label, "LVGL OK / UI OK");
+    lv_obj_set_style_text_color(label, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_set_style_text_font(label, lv_theme_get_font_large(screen), 0);
+    lv_obj_center(label);
+
+    ESP_LOGI("UI", "smoke screen created");
+    lv_obj_invalidate(lv_scr_act());
+    lv_timer_handler();
 }
 
 static void exio4_toggle_selftest(void)
