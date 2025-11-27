@@ -47,6 +47,8 @@ static void app_init_task(void *arg);
 static void lvgl_task(void *arg);
 static void lvgl_runtime_start(lv_display_t *disp);
 static void ui_create_smoke_screen(void);
+static void ui_smoke_set_status(const char *status);
+static void ui_smoke_timer_cb(lv_timer_t *timer);
 static void exio4_toggle_selftest(void);
 static void log_storage_state(bool storage_available);
 
@@ -170,6 +172,9 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
 
 static esp_timer_handle_t s_lvgl_tick_timer = NULL;
 static TaskHandle_t s_lvgl_task_handle = NULL;
+static lv_obj_t *s_smoke_label = NULL;
+static lv_timer_t *s_smoke_timer = NULL;
+static uint32_t s_smoke_counter = 0;
 
 static void lvgl_tick_cb(void *arg)
 {
@@ -302,8 +307,36 @@ static void app_init_task(void *arg)
 
     ESP_LOGI(TAG, "After CH422G/LCD sequencing, before LVGL core init");
 
+    // Bring up LVGL and the RGB panel before optional peripherals so the SMOKE UI is always visible.
+    lv_init();
+    ESP_LOGI(TAG, "After lv_init(), before RGB LCD creation");
+    INIT_YIELD();
+
+    int64_t t_rgb = stage_begin("rgb_lcd_init");
+    rgb_lcd_init();
+    stage_end("rgb_lcd_init", t_rgb);
+    ESP_LOGI(TAG, "RGB LCD init done, retrieving lv_display_t handle");
+    INIT_YIELD();
+
+    lv_display_t *disp = rgb_lcd_get_disp();
+    if (disp == NULL)
+    {
+        ESP_LOGE(TAG, "RGB display not available; skipping touch init");
+        logs_panel_add_log("Afficheur LVGL indisponible : tactile désactivé");
+        degraded_mode = true;
+        ui_smoke_set_status("Display missing");
+        ui_manager_set_degraded(true);
+    }
+    else
+    {
+        lv_display_set_default(disp);
+        ESP_LOGI(TAG, "MAIN: default LVGL display set to %p", (void *)disp);
+        ui_smoke_set_status("Display ready");
+        lvgl_runtime_start(disp);
+    }
+
 #if CONFIG_ENABLE_SDCARD
-    ESP_LOGI(TAG, "Init peripherals step 1: sdcard_init() before RGB panel start");
+    ESP_LOGI(TAG, "Init peripherals step 1: sdcard_init() after LCD ready");
     // Silence noisy IDF-level errors from the VFS FAT SDMMC helper when the slot is empty.
     esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_NONE);
     int64_t t_sd = stage_begin("sdcard_init");
@@ -313,6 +346,7 @@ static void app_init_task(void *arg)
     {
         ESP_LOGI(TAG, "microSD mounted successfully");
         storage_available = true;
+        ui_smoke_set_status("microSD OK");
         esp_err_t test_err = sdcard_test_file();
         if (test_err != ESP_OK)
         {
@@ -335,34 +369,8 @@ static void app_init_task(void *arg)
 
     log_storage_state(storage_available);
 
-    // Yield after synchronous storage probing so IDLE tasks can run before display/touch bring-up.
+    // Yield after synchronous storage probing so IDLE tasks can run before touch and the rest.
     vTaskDelay(pdMS_TO_TICKS(1));
-
-    // LVGL + display must be ready before GT911 so the indev can bind to the default display
-    lv_init();
-    ESP_LOGI(TAG, "After lv_init(), before RGB LCD creation");
-    INIT_YIELD();
-
-    int64_t t_rgb = stage_begin("rgb_lcd_init");
-    rgb_lcd_init();
-    stage_end("rgb_lcd_init", t_rgb);
-    ESP_LOGI(TAG, "RGB LCD init done, retrieving lv_display_t handle");
-    INIT_YIELD();
-
-    lv_display_t *disp = rgb_lcd_get_disp();
-    if (disp == NULL)
-    {
-        ESP_LOGE(TAG, "RGB display not available; skipping touch init");
-        logs_panel_add_log("Afficheur LVGL indisponible : tactile désactivé");
-        degraded_mode = true;
-        ui_manager_set_degraded(true);
-    }
-    else
-    {
-        lv_display_set_default(disp);
-        ESP_LOGI(TAG, "MAIN: default LVGL display set to %p", (void *)disp);
-        lvgl_runtime_start(disp);
-    }
 
 #if CONFIG_ENABLE_GT911
     ESP_LOGI(TAG, "Before GT911 init (display %s)", disp ? "ready" : "missing");
@@ -523,7 +531,6 @@ static void lvgl_runtime_start(lv_display_t *disp)
 
 static void ui_create_smoke_screen(void)
 {
-#if CONFIG_UI_SMOKE_TEST
     lv_display_t *disp = lv_disp_get_default();
     lv_obj_t *layer = disp ? lv_layer_top(disp) : lv_screen_active();
     if (layer == NULL)
@@ -541,12 +548,46 @@ static void ui_create_smoke_screen(void)
     lv_obj_move_foreground(panel);
 
     lv_obj_t *label = lv_label_create(panel);
-    lv_label_set_text(label, "LVGL OK");
+    s_smoke_label = label;
+    s_smoke_counter = 0;
+    lv_label_set_text_fmt(label, "LVGL OK %lu", (unsigned long)s_smoke_counter);
     lv_obj_set_style_text_color(label, lv_color_hex(0xF4F4F4), LV_PART_MAIN);
     lv_obj_center(label);
 
-    ESP_LOGI("UI", "LVGL smoke-test overlay enabled (CONFIG_UI_SMOKE_TEST=1)");
-#endif
+    if (s_smoke_timer == NULL)
+    {
+        s_smoke_timer = lv_timer_create(ui_smoke_timer_cb, 1000, NULL);
+        if (s_smoke_timer)
+        {
+            lv_timer_set_repeat_count(s_smoke_timer, -1);
+        }
+    }
+
+    ui_smoke_set_status("LVGL ready");
+    ESP_LOGI("UI", "LVGL smoke-test overlay enabled");
+}
+
+static void ui_smoke_set_status(const char *status)
+{
+    if (status == NULL)
+    {
+        return;
+    }
+
+    ESP_LOGI(TAG, "SMOKE UI: %s", status);
+}
+
+static void ui_smoke_timer_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+
+    if (s_smoke_label == NULL)
+    {
+        return;
+    }
+
+    ++s_smoke_counter;
+    lv_label_set_text_fmt(s_smoke_label, "LVGL OK %lu", (unsigned long)s_smoke_counter);
 }
 
 static void exio4_toggle_selftest(void)
