@@ -74,6 +74,34 @@ static gt911_point_t s_last_point;
 static bool s_initialized = false;
 static i2c_master_dev_handle_t s_dev = NULL;
 
+static void gt911_int_drive_low(void)
+{
+    if (GT911_INT_GPIO == GPIO_NUM_NC)
+    {
+        return;
+    }
+
+    const gpio_config_t cfg = {
+        .pin_bit_mask = 1ULL << GT911_INT_GPIO,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    esp_err_t err = gpio_config(&cfg);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to drive GT911 INT low (%s)", esp_err_to_name(err));
+        return;
+    }
+
+    err = gpio_set_level(GT911_INT_GPIO, 0);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to pull GT911 INT low (%s)", esp_err_to_name(err));
+    }
+}
+
 static void gt911_disable(const char *reason, esp_err_t err)
 {
     if (reason == NULL)
@@ -260,23 +288,27 @@ static bool gt911_read_primary_point(gt911_point_t *point)
 
 static esp_err_t gt911_hw_reset(void)
 {
+    gt911_int_drive_low();
+
     esp_err_t err = ch422g_set_touch_reset(true);
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "Unable to drive GT911 reset via IO extension (%s)", esp_err_to_name(err));
-        return err;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(15));
-    err = ch422g_set_touch_reset(false);
-    if (err != ESP_OK)
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    esp_err_t release_err = ch422g_set_touch_reset(false);
+    if (release_err != ESP_OK)
     {
-        ESP_LOGW(TAG, "Failed to release GT911 reset (%s)", esp_err_to_name(err));
-        return err;
+        ESP_LOGW(TAG, "Failed to release GT911 reset (%s)", esp_err_to_name(release_err));
     }
 
     vTaskDelay(pdMS_TO_TICKS(60));
-    return ESP_OK;
+    gt911_configure_int_pin();
+    ESP_LOGI(TAG, "reset sequence done");
+
+    return (err == ESP_OK) ? release_err : err;
 }
 
 static esp_err_t gt911_software_reset(void)
@@ -515,8 +547,7 @@ esp_err_t gt911_init(lv_display_t *disp)
         }
     }
 
-    vTaskDelay(pdMS_TO_TICKS(10));
-    gt911_configure_int_pin();
+    vTaskDelay(pdMS_TO_TICKS(50));
     const bool identity_ok = gt911_log_identity();
     if (!identity_ok)
     {
