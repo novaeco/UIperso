@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <math.h>
 #include <stdbool.h>
 
 #include "freertos/FreeRTOS.h"
@@ -26,6 +27,7 @@
 #include "rs485_driver.h"
 #include "ui_manager.h"
 #include "logs_panel.h"
+#include "system_status.h"
 #include "ui_smoke.h"
 
 /*
@@ -54,6 +56,7 @@ static void lvgl_runtime_start(lv_display_t *disp);
 static void exio4_toggle_selftest(void);
 static void log_storage_state(bool storage_available);
 static void publish_hw_status(bool i2c_ok, bool ch422g_ok, bool gt911_ok, bool touch_available);
+static void can_rx_task(void *arg);
 
 #define INIT_YIELD()            \
     do {                        \
@@ -83,12 +86,15 @@ static void log_build_info(void)
 
 static void log_option_state(void)
 {
-    ESP_LOGI(TAG_INIT, "Options: display=%d, touch=%d, sdcard=%d, i2c_scan=%d, ui_smoke=%d",
+    ESP_LOGI(TAG_INIT, "Options: display=%d, touch=%d, sdcard=%d, i2c_scan=%d, ui_smoke=%d, can=%d, rs485=%d, power=%d",
              CONFIG_ENABLE_DISPLAY,
              CONFIG_ENABLE_TOUCH,
              CONFIG_ENABLE_SDCARD,
              CONFIG_I2C_SCAN_AT_BOOT,
-             CONFIG_UI_SMOKE_MODE);
+             CONFIG_UI_SMOKE_MODE,
+             CONFIG_ENABLE_CAN,
+             CONFIG_ENABLE_RS485,
+             CONFIG_ENABLE_POWER);
 }
 
 // Reset loop root-cause (panic reason=4) was LVGL tick double-counting when CONFIG_LV_TICK_CUSTOM=1
@@ -194,6 +200,7 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
 
 static esp_timer_handle_t s_lvgl_tick_timer = NULL;
 static TaskHandle_t s_lvgl_task_handle = NULL;
+static TaskHandle_t s_can_rx_task_handle = NULL;
 
 static void lvgl_tick_cb(void *arg)
 {
@@ -242,6 +249,46 @@ static void log_heap_metrics(const char *stage)
                        (unsigned int)psram_min);
 }
 
+static void can_rx_task(void *arg)
+{
+    (void)arg;
+    twai_message_t rx_msg = {0};
+    TickType_t last_error_log = 0;
+
+    ESP_LOGI(TAG, "CAN RX task started (low priority)");
+
+    for (;;)
+    {
+        const esp_err_t err = can_bus_receive_frame(&rx_msg, pdMS_TO_TICKS(10));
+        if (err == ESP_OK)
+        {
+            system_status_increment_can_frames();
+        }
+        else if (err == ESP_ERR_TIMEOUT)
+        {
+            // No frame received; keep looping without spamming logs.
+        }
+        else if (err == ESP_ERR_INVALID_STATE)
+        {
+            if ((xTaskGetTickCount() - last_error_log) > pdMS_TO_TICKS(1000))
+            {
+                ESP_LOGW(TAG, "CAN RX task: TWAI driver not started");
+                last_error_log = xTaskGetTickCount();
+            }
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        else
+        {
+            if ((xTaskGetTickCount() - last_error_log) > pdMS_TO_TICKS(1000))
+            {
+                ESP_LOGW(TAG, "CAN RX task receive error: %s", esp_err_to_name(err));
+                last_error_log = xTaskGetTickCount();
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+}
+
 void app_main(void)
 {
     BaseType_t ok = xTaskCreatePinnedToCore(
@@ -272,6 +319,7 @@ static void app_init_task(void *arg)
     bool touch_available = false;
     esp_log_level_set("*", ESP_LOG_INFO);
     ESP_LOGI(TAG, "ESP32-S3 UI phase 4 starting");
+    system_status_init();
     log_build_info();
     log_option_state();
     log_reset_diagnostics();
@@ -457,7 +505,7 @@ static void app_init_task(void *arg)
     INIT_YIELD();
 
     ESP_LOGI(TAG, "Init peripherals step 2: can_bus_init()");
-
+#if CONFIG_ENABLE_CAN
     esp_err_t can_err = can_bus_init();
     if (can_err != ESP_OK)
     {
@@ -467,26 +515,69 @@ static void app_init_task(void *arg)
         logs_panel_add_log("CAN: init échouée (%s), CAN désactivé", esp_err_to_name(can_err));
         degraded_mode = true;
         ui_manager_set_degraded(true);
+        system_status_set_can_ok(false);
     }
     else
     {
+        system_status_set_can_ok(true);
         ESP_LOGI(TAG, "CAN init OK, bus actif");
+        if (s_can_rx_task_handle == NULL)
+        {
+            BaseType_t can_task_ok = xTaskCreatePinnedToCore(
+                can_rx_task,
+                "can_rx",
+                4096,
+                NULL,
+                2,
+                &s_can_rx_task_handle,
+                0);
+            if (can_task_ok != pdPASS)
+            {
+                ESP_LOGE(TAG, "Failed to create CAN RX task");
+                system_status_set_can_ok(false);
+            }
+        }
     }
+#else
+    ESP_LOGI(TAG, "CAN disabled (CONFIG_ENABLE_CAN=0); skipping can_bus_init()");
+    system_status_set_can_ok(false);
+#endif
     INIT_YIELD();
 
     ESP_LOGI(TAG, "Init peripherals step 3: rs485_init()");
+#if CONFIG_ENABLE_RS485
     esp_err_t rs485_err = rs485_init();
     if (rs485_err != ESP_OK)
     {
         log_non_fatal_error("RS485 init", rs485_err);
         degraded_mode = true;
         ui_manager_set_degraded(true);
+        system_status_set_rs485_ok(false);
     }
+    else
+    {
+        system_status_set_rs485_ok(true);
+        ESP_LOGI(TAG, "RS485 init OK");
+    }
+#else
+    ESP_LOGI(TAG, "RS485 disabled (CONFIG_ENABLE_RS485=0); skipping rs485_init()");
+    system_status_set_rs485_ok(false);
+#endif
     INIT_YIELD();
 
     ESP_LOGI(TAG, "Init peripherals step 4: cs8501_init()");
+#if CONFIG_ENABLE_POWER
     cs8501_init();
-    ESP_LOGI(TAG, "Battery voltage: %.2f V, charging: %s", cs8501_get_battery_voltage(), cs8501_is_charging() ? "yes" : "no");
+    float vbat = cs8501_get_battery_voltage();
+    const bool vbat_ok = cs8501_has_voltage_reading() && !isnan(vbat);
+    const bool charging_known = cs8501_has_charge_status();
+    const bool charging = charging_known ? cs8501_is_charging() : false;
+    system_status_set_power(true, vbat_ok, vbat_ok ? vbat : NAN, charging_known, charging);
+    ESP_LOGI(TAG, "Battery voltage: %.2f V, charging: %s", vbat, charging ? "yes" : "no");
+#else
+    ESP_LOGW(TAG, "CS8501 disabled (CONFIG_ENABLE_POWER=0); skipping power telemetry");
+    system_status_set_power(false, false, NAN, false, false);
+#endif
     INIT_YIELD();
 
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");

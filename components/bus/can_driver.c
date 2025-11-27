@@ -5,12 +5,40 @@
 
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
+#include "system_status.h"
 
 #define CAN_TX_GPIO GPIO_NUM_20
 #define CAN_RX_GPIO GPIO_NUM_19
 
 static const char *TAG = "CAN_DRV";
 static bool s_can_started = false;
+
+static twai_timing_config_t select_timing_config(void)
+{
+#if defined(CONFIG_CAN_BITRATE_125K)
+    return (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();
+#elif defined(CONFIG_CAN_BITRATE_250K)
+    return (twai_timing_config_t)TWAI_TIMING_CONFIG_250KBITS();
+#elif defined(CONFIG_CAN_BITRATE_1M)
+    return (twai_timing_config_t)TWAI_TIMING_CONFIG_1MBITS();
+#else
+    return (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
+#endif
+}
+
+static const char *select_bitrate_label(void)
+{
+#if defined(CONFIG_CAN_BITRATE_125K)
+    return "125 kbit/s";
+#elif defined(CONFIG_CAN_BITRATE_250K)
+    return "250 kbit/s";
+#elif defined(CONFIG_CAN_BITRATE_1M)
+    return "1 Mbit/s";
+#else
+    return "500 kbit/s";
+#endif
+}
 
 esp_err_t can_bus_init(void)
 {
@@ -20,18 +48,25 @@ esp_err_t can_bus_init(void)
         return ESP_OK;
     }
 
-    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO, CAN_RX_GPIO, TWAI_MODE_NORMAL);
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO, CAN_RX_GPIO,
+#if defined(CONFIG_CAN_LISTEN_ONLY) && CONFIG_CAN_LISTEN_ONLY
+                                                                  TWAI_MODE_LISTEN_ONLY);
+    ESP_LOGI(TAG, "TWAI listen-only mode enabled (CONFIG_CAN_LISTEN_ONLY)");
+#else
+                                                                  TWAI_MODE_NORMAL);
+#endif
     g_config.tx_queue_len = 5;
     g_config.rx_queue_len = 5;
     g_config.alerts_enabled = TWAI_ALERT_BUS_OFF | TWAI_ALERT_ERR_PASS | TWAI_ALERT_RX_DATA | TWAI_ALERT_TX_SUCCESS;
 
-    const twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+    const twai_timing_config_t t_config = select_timing_config();
     const twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     esp_err_t err = twai_driver_install(&g_config, &t_config, &f_config);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
     {
         ESP_LOGE(TAG, "twai_driver_install failed: %s (CAN désactivé)", esp_err_to_name(err));
+        system_status_set_can_ok(false);
         return err;
     }
 
@@ -44,6 +79,7 @@ esp_err_t can_bus_init(void)
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
     {
         ESP_LOGE(TAG, "twai_start failed: %s (CAN désactivé)", esp_err_to_name(err));
+        system_status_set_can_ok(false);
         return err;
     }
 
@@ -53,7 +89,8 @@ esp_err_t can_bus_init(void)
     }
 
     s_can_started = true;
-    ESP_LOGI(TAG, "TWAI bus initialized (normal mode, 500 kbit/s)");
+    system_status_set_can_ok(true);
+    ESP_LOGI(TAG, "TWAI bus initialized (%s)", select_bitrate_label());
     return ESP_OK;
 }
 

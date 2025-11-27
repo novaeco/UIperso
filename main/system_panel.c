@@ -2,15 +2,18 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 
 #include "ch422g.h"
 #include "cs8501.h"
 #include "logs_panel.h"
 #include "lv_theme_custom.h"
+#include "system_status.h"
 #if CONFIG_ENABLE_SDCARD
 #include "sdcard.h"
 #endif
 
+#include <inttypes.h>
 #include <math.h>
 #include <stdbool.h>
 
@@ -28,6 +31,8 @@ static lv_obj_t *i2c_status_label = NULL;
 static lv_obj_t *ch422g_status_label = NULL;
 static lv_obj_t *gt911_status_label = NULL;
 static lv_obj_t *touch_status_label = NULL;
+static lv_obj_t *can_status_label = NULL;
+static lv_obj_t *rs485_status_label = NULL;
 
 static void set_status_label(lv_obj_t *label, const char *prefix, bool ok)
 {
@@ -38,6 +43,22 @@ static void set_status_label(lv_obj_t *label, const char *prefix, bool ok)
 
     lv_label_set_text_fmt(label, "%s : %s", prefix, ok ? "OK" : "KO");
     lv_obj_set_style_text_color(label, ok ? lv_color_hex(0x4CAF50) : lv_color_hex(0xF44336), LV_PART_MAIN);
+}
+
+static void set_status_text_with_color(lv_obj_t *label, const char *text, bool ok, bool known)
+{
+    if (!label || !text)
+    {
+        return;
+    }
+
+    lv_label_set_text(label, text);
+    lv_color_t color = lv_color_hex(0x9E9E9E);
+    if (known)
+    {
+        color = ok ? lv_color_hex(0x4CAF50) : lv_color_hex(0xF44336);
+    }
+    lv_obj_set_style_text_color(label, color, LV_PART_MAIN);
 }
 
 static void apply_backlight_level(uint8_t percent)
@@ -107,11 +128,25 @@ static void sd_test_button_event_cb(lv_event_t *e)
 static void refresh_system_info(lv_timer_t *timer)
 {
     (void)timer;
+    system_status_t status = {0};
+
+#if CONFIG_ENABLE_POWER
+    float voltage = cs8501_get_battery_voltage();
+    const bool voltage_available = cs8501_has_voltage_reading() && !isnan(voltage);
+    const bool charging_known = cs8501_has_charge_status();
+    const bool charging = charging_known ? cs8501_is_charging() : false;
+    system_status_set_power(true, voltage_available, voltage_available ? voltage : NAN, charging_known, charging);
+#else
+    system_status_set_power(false, false, NAN, false, false);
+#endif
+
+    system_status_get(&status);
+
     if (sd_status_label)
     {
 #if CONFIG_ENABLE_SDCARD
-        sdcard_status_t status = sdcard_get_status();
-        const char *state = status.mounted ? "montée" : "non montée";
+        sdcard_status_t sd_status = sdcard_get_status();
+        const char *state = sd_status.mounted ? "montée" : "non montée";
         lv_label_set_text_fmt(sd_status_label, "SD : %s", state);
 #else
         lv_label_set_text(sd_status_label, "SD : désactivée");
@@ -120,28 +155,64 @@ static void refresh_system_info(lv_timer_t *timer)
 
     if (battery_label)
     {
-        float voltage = cs8501_get_battery_voltage();
-        if (cs8501_has_voltage_reading() && !isnan(voltage))
+        if (status.power_ok && status.power_telemetry_available && !isnan(status.vbat))
         {
-            lv_label_set_text_fmt(battery_label, "Batterie : %.2f V", voltage);
+            lv_label_set_text_fmt(battery_label, "Batterie : %.2f V", status.vbat);
+            lv_obj_set_style_text_color(battery_label, lv_color_hex(0x4CAF50), LV_PART_MAIN);
+        }
+        else if (!status.power_ok)
+        {
+            lv_label_set_text(battery_label, "Batterie : désactivée");
+            lv_obj_set_style_text_color(battery_label, lv_color_hex(0x9E9E9E), LV_PART_MAIN);
         }
         else
         {
             lv_label_set_text(battery_label, "Batterie : N/A");
+            lv_obj_set_style_text_color(battery_label, lv_color_hex(0x9E9E9E), LV_PART_MAIN);
         }
     }
 
     if (charge_label)
     {
-        if (cs8501_has_charge_status())
+        if (status.power_ok && status.charging_known)
         {
-            lv_label_set_text_fmt(charge_label, "Charge : %s", cs8501_is_charging() ? "en cours" : "inactive");
+            lv_label_set_text_fmt(charge_label, "Charge : %s", status.charging ? "en cours" : "inactive");
+            lv_obj_set_style_text_color(charge_label, status.charging ? lv_color_hex(0x4CAF50) : lv_color_hex(0xFFB300), LV_PART_MAIN);
+        }
+        else if (!status.power_ok)
+        {
+            lv_label_set_text(charge_label, "Charge : désactivée");
+            lv_obj_set_style_text_color(charge_label, lv_color_hex(0x9E9E9E), LV_PART_MAIN);
         }
         else
         {
             lv_label_set_text(charge_label, "Charge : inconnue");
+            lv_obj_set_style_text_color(charge_label, lv_color_hex(0x9E9E9E), LV_PART_MAIN);
         }
     }
+
+#if CONFIG_ENABLE_CAN
+    if (can_status_label)
+    {
+        lv_label_set_text_fmt(can_status_label, "CAN : %s (%" PRIu32 " rx)", status.can_ok ? "OK" : "KO", status.can_frames_rx);
+        lv_obj_set_style_text_color(can_status_label, status.can_ok ? lv_color_hex(0x4CAF50) : lv_color_hex(0xF44336), LV_PART_MAIN);
+    }
+#else
+    set_status_text_with_color(can_status_label, "CAN : désactivé", false, false);
+#endif
+
+#if CONFIG_ENABLE_RS485
+    if (rs485_status_label)
+    {
+        lv_label_set_text_fmt(rs485_status_label, "RS485 : %s (tx=%" PRIu32 "B rx=%" PRIu32 "B)",
+                              status.rs485_ok ? "OK" : "KO",
+                              status.rs485_tx_count,
+                              status.rs485_rx_count);
+        lv_obj_set_style_text_color(rs485_status_label, status.rs485_ok ? lv_color_hex(0x4CAF50) : lv_color_hex(0xF44336), LV_PART_MAIN);
+    }
+#else
+    set_status_text_with_color(rs485_status_label, "RS485 : désactivé", false, false);
+#endif
 }
 
 static lv_obj_t *create_section(lv_obj_t *parent, const char *title)
@@ -221,6 +292,14 @@ lv_obj_t *system_panel_create(void)
     lv_obj_add_style(touch_status_label, lv_theme_custom_style_label(), LV_PART_MAIN);
     lv_label_set_text(touch_status_label, "Tactile : inconnu");
 
+    can_status_label = lv_label_create(io_section);
+    lv_obj_add_style(can_status_label, lv_theme_custom_style_label(), LV_PART_MAIN);
+    lv_label_set_text(can_status_label, "CAN : inconnu");
+
+    rs485_status_label = lv_label_create(io_section);
+    lv_obj_add_style(rs485_status_label, lv_theme_custom_style_label(), LV_PART_MAIN);
+    lv_label_set_text(rs485_status_label, "RS485 : inconnu");
+
     refresh_system_info(NULL);
 
     if (!system_timer)
@@ -234,6 +313,8 @@ lv_obj_t *system_panel_create(void)
     set_status_label(ch422g_status_label, "CH422G", false);
     set_status_label(gt911_status_label, "GT911", false);
     set_status_label(touch_status_label, "Tactile", false);
+    set_status_text_with_color(can_status_label, "CAN : désactivé", false, false);
+    set_status_text_with_color(rs485_status_label, "RS485 : désactivé", false, false);
 
     return screen;
 }

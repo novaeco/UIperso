@@ -6,6 +6,7 @@
 #include "esp_rom_sys.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "system_status.h"
 
 #define RS485_UART_NUM UART_NUM_1
 #define RS485_TXD_PIN GPIO_NUM_15  // TX -> RS485_TXD (Waveshare 7B wiring)
@@ -15,6 +16,7 @@
 static const char *TAG = "RS485";
 static bool s_uart_initialized = false;
 static SemaphoreHandle_t s_rs485_lock = NULL;
+static const uint32_t RS485_TURNAROUND_US = 80;
 
 static inline void rs485_set_transmit(bool enable)
 {
@@ -67,6 +69,13 @@ esp_err_t rs485_init(void)
         return err;
     }
 
+    err = uart_set_mode(RS485_UART_NUM, UART_MODE_RS485_HALF_DUPLEX);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "uart_set_mode half-duplex failed (%s)", esp_err_to_name(err));
+        return err;
+    }
+
     gpio_config_t de_config = {
         .pin_bit_mask = BIT64(RS485_DE_RE_PIN),
         .mode = GPIO_MODE_OUTPUT,
@@ -83,7 +92,8 @@ esp_err_t rs485_init(void)
     rs485_set_transmit(false);
 
     s_uart_initialized = true;
-    ESP_LOGI(TAG, "RS485 UART initialized (UART1, 115200 8N1)");
+    system_status_set_rs485_ok(true);
+    ESP_LOGI(TAG, "RS485 UART initialized (UART1, 115200 8N1, half-duplex, TX buf enabled)");
     return ESP_OK;
 }
 
@@ -120,8 +130,13 @@ esp_err_t rs485_write(const uint8_t *data, size_t len, TickType_t timeout)
     {
         ESP_LOGE(TAG, "uart_wait_tx_done failed (%s)", esp_err_to_name(err));
     }
+    else
+    {
+        system_status_add_rs485_tx(len);
+    }
 
 exit:
+    esp_rom_delay_us(RS485_TURNAROUND_US);
     rs485_set_transmit(false);
     xSemaphoreGive(s_rs485_lock);
     return err;
@@ -134,6 +149,16 @@ esp_err_t rs485_read(uint8_t *data, size_t max_len, size_t *out_len, TickType_t 
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (s_rs485_lock == NULL)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(s_rs485_lock, pdMS_TO_TICKS(50)) != pdTRUE)
+    {
+        return ESP_ERR_TIMEOUT;
+    }
+
     rs485_set_transmit(false);
     int rx_bytes = uart_read_bytes(RS485_UART_NUM, data, max_len, timeout);
     if (rx_bytes < 0)
@@ -142,6 +167,7 @@ esp_err_t rs485_read(uint8_t *data, size_t max_len, size_t *out_len, TickType_t 
         {
             *out_len = 0;
         }
+        xSemaphoreGive(s_rs485_lock);
         return ESP_FAIL;
     }
 
@@ -152,7 +178,10 @@ esp_err_t rs485_read(uint8_t *data, size_t max_len, size_t *out_len, TickType_t 
 
     if (rx_bytes == 0)
     {
+        xSemaphoreGive(s_rs485_lock);
         return ESP_ERR_TIMEOUT;
     }
+    system_status_add_rs485_rx((size_t)rx_bytes);
+    xSemaphoreGive(s_rs485_lock);
     return ESP_OK;
 }

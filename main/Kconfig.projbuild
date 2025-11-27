@@ -39,4 +39,55 @@ config UI_SMOKE_MODE
         full application UI. Intended for bring-up and diagnostics; can be
         disabled in production builds.
 
+config ENABLE_CAN
+    bool "Enable CAN (TWAI) controller"
+    default n
+    help
+        Enable initialization of the onboard CAN (TWAI) controller. When
+        disabled, the firmware skips any CAN pin configuration or driver
+        bring-up.
+
+if ENABLE_CAN
+
+choice CAN_BITRATE
+    prompt "CAN bitrate"
+    default CAN_BITRATE_500K
+
+config CAN_BITRATE_125K
+    bool "125 kbit/s"
+
+config CAN_BITRATE_250K
+    bool "250 kbit/s"
+
+config CAN_BITRATE_500K
+    bool "500 kbit/s"
+
+config CAN_BITRATE_1M
+    bool "1 Mbit/s"
+
+endchoice
+
+config CAN_LISTEN_ONLY
+    bool "Enable CAN listen-only debug mode"
+    default n
+    help
+        Start the TWAI controller in listen-only mode for passive bus
+        monitoring during debugging.
+
+endif
+
+config ENABLE_RS485
+    bool "Enable RS485 (UART1)"
+    default n
+    help
+        Enable initialization of the RS485 half-duplex UART. When disabled
+        the driver is skipped entirely and no GPIOs are touched.
+
+config ENABLE_POWER
+    bool "Enable CS8501 power telemetry"
+    default y
+    help
+        Enable CS8501 initialization and telemetry reads. Disable if the
+        CS8501 is not populated on the board revision.
+
 endmenu
