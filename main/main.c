@@ -154,6 +154,8 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
     }
 }
 
+static esp_timer_handle_t s_lvgl_tick_timer = NULL;
+
 static void lvgl_tick_cb(void *arg)
 {
     (void)arg;
@@ -330,6 +332,11 @@ static void app_init_task(void *arg)
         degraded_mode = true;
         ui_manager_set_degraded(true);
     }
+    else
+    {
+        lv_display_set_default(disp);
+        ESP_LOGI(TAG, "MAIN: default LVGL display set to %p", (void *)disp);
+    }
 
 #if GT911_ENABLE
     ESP_LOGI(TAG, "Before GT911 init (display %s)", disp ? "ready" : "missing");
@@ -396,23 +403,29 @@ static void app_init_task(void *arg)
         .dispatch_method = ESP_TIMER_TASK,
         .name = "lv_tick",
     };
-    esp_timer_handle_t tick_timer = NULL;
-    esp_err_t timer_err = esp_timer_create(&tick_timer_args, &tick_timer);
-    if (timer_err != ESP_OK)
+    if (s_lvgl_tick_timer == NULL)
     {
-        ESP_LOGE(TAG, "Failed to create LVGL tick timer (%s)", esp_err_to_name(timer_err));
-    }
-    else
-    {
-        timer_err = esp_timer_start_periodic(tick_timer, 1000);
+        esp_err_t timer_err = esp_timer_create(&tick_timer_args, &s_lvgl_tick_timer);
         if (timer_err != ESP_OK)
         {
-            ESP_LOGE(TAG, "Failed to start LVGL tick timer (%s)", esp_err_to_name(timer_err));
+            ESP_LOGE(TAG, "Failed to create LVGL tick timer (%s)", esp_err_to_name(timer_err));
         }
         else
         {
-            ESP_LOGI(TAG, "MAIN: lvgl tick started (1ms esp_timer)");
+            timer_err = esp_timer_start_periodic(s_lvgl_tick_timer, 1000);
+            if (timer_err != ESP_OK)
+            {
+                ESP_LOGE(TAG, "Failed to start LVGL tick timer (%s)", esp_err_to_name(timer_err));
+            }
+            else
+            {
+                ESP_LOGI(TAG, "MAIN: lvgl tick started (1ms esp_timer)");
+            }
         }
+    }
+    else
+    {
+        ESP_LOGW(TAG, "LVGL tick timer already created; skipping");
     }
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");
     ESP_LOGI(TAG, "MAIN: ui entrypoint called: ui_manager_init");
@@ -431,6 +444,7 @@ static void app_init_task(void *arg)
         ui_manager_set_degraded(degraded_mode);
         ESP_LOGI(TAG, "MAIN: ui init done");
         ESP_LOGI(TAG, "MAIN: active screen=%p", (void *)lv_scr_act());
+        lv_obj_invalidate(lv_screen_active());
     }
 
     log_heap_metrics("post-init");
