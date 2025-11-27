@@ -74,6 +74,8 @@ static gt911_point_t s_last_point;
 static bool s_initialized = false;
 static i2c_master_dev_handle_t s_dev = NULL;
 
+static void gt911_configure_int_pin(void);
+
 static void gt911_int_drive_low(void)
 {
     if (GT911_INT_GPIO == GPIO_NUM_NC)
