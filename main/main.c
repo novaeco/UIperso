@@ -419,7 +419,7 @@ static void app_init_task(void *arg)
             }
             else
             {
-                ESP_LOGI(TAG, "MAIN: lvgl tick started (1ms esp_timer)");
+                ESP_LOGI(TAG, "LVGL: tick timer started (1ms)");
             }
         }
     }
@@ -428,7 +428,7 @@ static void app_init_task(void *arg)
         ESP_LOGW(TAG, "LVGL tick timer already created; skipping");
     }
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");
-    ESP_LOGI(TAG, "MAIN: ui entrypoint called: ui_manager_init");
+    ESP_LOGI(TAG, "UI: entrypoint called: ui_manager_init");
     int64_t t_ui = stage_begin("ui_manager_init");
     esp_err_t ui_err = ui_manager_init();
     stage_end("ui_manager_init", t_ui);
@@ -470,11 +470,19 @@ static void app_init_task(void *arg)
 
 static void lvgl_task(void *arg)
 {
-    ESP_LOGI(TAG, "MAIN: lvgl task started on core=%d", xPortGetCoreID());
+    ESP_LOGI(TAG, "LVGL: task started on core=%d", xPortGetCoreID());
+    int64_t last_log_us = esp_timer_get_time();
 
     for (;;)
     {
         lv_timer_handler();
+        const int64_t now_us = esp_timer_get_time();
+        if (now_us - last_log_us >= 1000000)
+        {
+            const uint32_t flush_count = rgb_lcd_flush_count_get_and_reset();
+            ESP_LOGI(TAG, "RGB: flush/s=%u", (unsigned int)flush_count);
+            last_log_us = now_us;
+        }
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
