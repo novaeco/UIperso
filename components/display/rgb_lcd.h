@@ -10,6 +10,7 @@ extern "C" {
 void rgb_lcd_init(void);
 lv_display_t *rgb_lcd_get_disp(void);
 esp_lcd_panel_handle_t rgb_lcd_get_panel(void);
+uint32_t rgb_lcd_flush_count_get_and_reset(void);
 
 #ifdef __cplusplus
 }

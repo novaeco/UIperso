@@ -61,6 +61,7 @@ static lv_display_t *s_disp = NULL;
 static esp_lcd_panel_handle_t s_panel_handle = NULL;
 static uint8_t *s_buf1 = NULL;
 static uint8_t *s_buf2 = NULL;
+static uint32_t s_flush_count = 0;
 
 /*
  * Fixes:
@@ -71,9 +72,6 @@ static uint8_t *s_buf2 = NULL;
 
 static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
-    static uint32_t s_flush_count = 0;
-    static int64_t s_last_log_us = 0;
-
     const int32_t x1 = area->x1;
     const int32_t y1 = area->y1;
     const int32_t x2 = area->x2 + 1;
@@ -87,15 +85,15 @@ static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px
     }
 
     s_flush_count++;
-    const int64_t now_us = esp_timer_get_time();
-    if (now_us - s_last_log_us >= 1000000)
-    {
-        ESP_LOGI(TAG, "RGB: flush/s=%u", (unsigned int)s_flush_count);
-        s_flush_count = 0;
-        s_last_log_us = now_us;
-    }
 
     lv_display_flush_ready(disp);
+}
+
+uint32_t rgb_lcd_flush_count_get_and_reset(void)
+{
+    const uint32_t count = s_flush_count;
+    s_flush_count = 0;
+    return count;
 }
 
 static void rgb_lcd_init_backlight(void)
