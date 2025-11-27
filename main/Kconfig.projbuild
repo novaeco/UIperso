@@ -1,4 +1,4 @@
-menu "Application Configuration"
+menu "UIperso options"
 
 config ENABLE_DISPLAY
     bool "Enable RGB display bring-up"

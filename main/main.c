@@ -670,7 +670,7 @@ static void lvgl_task(void *arg)
             heartbeat_counter++;
             last_heartbeat = now;
             ui_manager_tick_1s();
-            ESP_LOGI(TAG_LVGL, "LVGL heartbeat %u", (unsigned int)heartbeat_counter);
+            ESP_LOGI(TAG_LVGL, "LVGL heartbeat %" PRIu32, heartbeat_counter);
         }
     }
 }
