@@ -1,5 +1,6 @@
 #include "rgb_lcd.h"
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -56,12 +57,16 @@ static const gpio_num_t s_data_gpio[LCD_DATA_WIDTH] = {
 };
 
 static const char *TAG = "RGB_LCD";
+static const char *TAG_LVGL = "LVGL";
 
 static lv_display_t *s_disp = NULL;
 static esp_lcd_panel_handle_t s_panel_handle = NULL;
 static uint8_t *s_buf1 = NULL;
 static uint8_t *s_buf2 = NULL;
 static uint32_t s_flush_count = 0;
+static uint32_t s_flush_count_window = 0;
+static bool s_first_flush_logged = false;
+static int64_t s_last_flush_log_us = 0;
 
 /*
  * Fixes:
@@ -85,6 +90,22 @@ static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px
     }
 
     s_flush_count++;
+    s_flush_count_window++;
+
+    if (!s_first_flush_logged)
+    {
+        ESP_LOGI(TAG_LVGL, "first flush");
+        s_first_flush_logged = true;
+        s_last_flush_log_us = esp_timer_get_time();
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+    if ((s_last_flush_log_us != 0) && (now_us - s_last_flush_log_us >= 1000000))
+    {
+        ESP_LOGI(TAG_LVGL, "flush/s=%u", (unsigned int)s_flush_count_window);
+        s_flush_count_window = 0;
+        s_last_flush_log_us = now_us;
+    }
 
     lv_display_flush_ready(disp);
 }
@@ -246,6 +267,9 @@ cleanup:
         s_buf1 = NULL;
         s_buf2 = NULL;
         s_flush_count = 0;
+        s_flush_count_window = 0;
+        s_first_flush_logged = false;
+        s_last_flush_log_us = 0;
         ESP_LOGW(TAG, "RGB panel init aborted, resources released");
     }
 }
