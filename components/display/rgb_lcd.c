@@ -122,6 +122,44 @@ uint32_t rgb_lcd_flush_count_get(void)
     return atomic_load_explicit(&s_flush_count, memory_order_relaxed);
 }
 
+void rgb_lcd_draw_test_pattern(void)
+{
+    if (s_panel_handle == NULL)
+    {
+        ESP_LOGW(TAG, "RGB test pattern skipped: panel not initialized");
+        return;
+    }
+
+    // Four vertical bars (red, green, blue, white) to validate wiring without LVGL.
+    static uint16_t bar_colors[4] = {
+        0xF800, // Red
+        0x07E0, // Green
+        0x001F, // Blue
+        0xFFFF, // White
+    };
+
+    const int bar_width = LCD_H_RES / 4;
+    uint16_t *line = heap_caps_malloc(LCD_H_RES * sizeof(uint16_t), MALLOC_CAP_INTERNAL);
+    if (line == NULL)
+    {
+        ESP_LOGW(TAG, "RGB test pattern skipped: line buffer alloc failed");
+        return;
+    }
+
+    for (int y = 0; y < LCD_V_RES; ++y)
+    {
+        for (int x = 0; x < LCD_H_RES; ++x)
+        {
+            const int bar = x / bar_width;
+            line[x] = bar_colors[bar < 4 ? bar : 3];
+        }
+        (void)esp_lcd_panel_draw_bitmap(s_panel_handle, 0, y, LCD_H_RES, y + 1, line);
+    }
+
+    heap_caps_free(line);
+    ESP_LOGI(TAG, "RGB test pattern drawn (4 vertical bars)");
+}
+
 static void rgb_lcd_init_backlight(void)
 {
     // Backlight is driven via the CH422G IO expander (EXIO2). Nothing to do here.

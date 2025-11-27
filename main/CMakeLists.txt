@@ -1,5 +1,6 @@
 idf_component_register(SRCS "main.c"
                             "logs_panel.c"
+                            "lvgl_runtime.c"
                             "ui_smoke.c"
                             "ui_manager.c"
                             "ui/theme.c"

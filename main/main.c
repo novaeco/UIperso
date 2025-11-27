@@ -31,6 +31,7 @@
 #include "logs_panel.h"
 #include "system_status.h"
 #include "ui_smoke.h"
+#include "lvgl_runtime.h"
 
 /*
  * Touch reboot loop post-mortem:
@@ -48,14 +49,11 @@
 
 static const char *TAG_INIT = "APP_INIT";
 static const char *TAG = "MAIN";
-static const char *TAG_LVGL = "LVGL";
 
 static void app_init_task(void *arg);
 static void log_build_info(void);
 static void log_option_state(void);
 static void update_ui_mode_from_status(void);
-static void lvgl_task(void *arg);
-static void lvgl_runtime_start(lv_display_t *disp);
 static void exio4_toggle_selftest(void);
 static void log_storage_state(bool storage_available);
 static void publish_hw_status(bool i2c_ok, bool ch422g_ok, bool gt911_ok, bool touch_available);
@@ -203,17 +201,9 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
     }
 }
 
-static esp_timer_handle_t s_lvgl_tick_timer = NULL;
-static TaskHandle_t s_lvgl_task_handle = NULL;
 #if CONFIG_ENABLE_CAN
 static TaskHandle_t s_can_rx_task_handle = NULL;
 #endif
-
-static void lvgl_tick_cb(void *arg)
-{
-    (void)arg;
-    lv_tick_inc(1);
-}
 
 static void log_storage_state(bool storage_available)
 {
@@ -459,9 +449,26 @@ static void app_init_task(void *arg)
     {
         lv_display_set_default(disp);
         ESP_LOGI(TAG, "MAIN: default LVGL display set to %p", (void *)disp);
+
+#if CONFIG_DIAG_RGB_TESTPATTERN
+        rgb_lcd_draw_test_pattern();
+#endif
+
+        const int64_t t_lvgl_runtime = stage_begin("lvgl_runtime_start");
+        esp_err_t lvgl_start_err = lvgl_runtime_start(disp);
+        stage_end("lvgl_runtime_start", t_lvgl_runtime);
+
+        if (lvgl_start_err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "LVGL runtime start failed (%s)", esp_err_to_name(lvgl_start_err));
+        }
+        else
+        {
+            ESP_LOGI(TAG, "LVGL tick alive=%" PRIu32 " immediately after start", lvgl_tick_alive_count());
+        }
+
         ui_smoke_boot_screen();
         lv_timer_handler();
-        lvgl_runtime_start(disp);
         ui_smoke_init(disp);
     }
 
@@ -649,90 +656,6 @@ static void app_init_task(void *arg)
     log_heap_metrics("post-init");
 
     vTaskDelete(NULL);
-}
-
-static void lvgl_task(void *arg)
-{
-    ESP_LOGI(TAG_LVGL, "LVGL task started");
-    ESP_LOGI(TAG_LVGL, "task pinned core=%d", xPortGetCoreID());
-
-    TickType_t last_heartbeat = xTaskGetTickCount();
-    uint32_t heartbeat_counter = 0;
-
-    for (;;)
-    {
-        lv_timer_handler();
-        vTaskDelay(pdMS_TO_TICKS(5));
-
-        const TickType_t now = xTaskGetTickCount();
-        if ((now - last_heartbeat) >= pdMS_TO_TICKS(1000))
-        {
-            heartbeat_counter++;
-            last_heartbeat = now;
-            ui_manager_tick_1s();
-            ESP_LOGI(TAG_LVGL, "LVGL heartbeat %" PRIu32, heartbeat_counter);
-        }
-    }
-}
-
-static void lvgl_runtime_start(lv_display_t *disp)
-{
-    (void)disp;
-    ESP_LOGI(TAG, "Init peripherals step 5: LVGL tick source");
-
-    const esp_timer_create_args_t tick_timer_args = {
-        .callback = &lvgl_tick_cb,
-        .dispatch_method = ESP_TIMER_TASK,
-        .name = "lv_tick",
-    };
-
-    if (s_lvgl_tick_timer == NULL)
-    {
-        esp_err_t timer_err = esp_timer_create(&tick_timer_args, &s_lvgl_tick_timer);
-        if (timer_err != ESP_OK)
-        {
-            ESP_LOGE(TAG_LVGL, "Failed to create LVGL tick timer (%s)", esp_err_to_name(timer_err));
-        }
-        else
-        {
-            ESP_LOGI(TAG_LVGL, "tick create ok");
-            timer_err = esp_timer_start_periodic(s_lvgl_tick_timer, 1000);
-            if (timer_err != ESP_OK)
-            {
-                ESP_LOGE(TAG_LVGL, "Failed to start LVGL tick timer (%s)", esp_err_to_name(timer_err));
-            }
-            else
-            {
-                ESP_LOGI(TAG_LVGL, "tick started (1ms)");
-            }
-        }
-    }
-    else
-    {
-        ESP_LOGW(TAG_LVGL, "LVGL tick timer already created; skipping");
-    }
-
-    if (s_lvgl_task_handle == NULL)
-    {
-        ESP_LOGI(TAG_INIT, "app_init_task continuing: creating LVGL task on core %d", 1);
-        BaseType_t lvgl_ok = xTaskCreatePinnedToCore(
-            lvgl_task,
-            "lvgl",
-            12288,
-            NULL,
-            6,
-            &s_lvgl_task_handle,
-            1);
-
-        if (lvgl_ok != pdPASS)
-        {
-            ESP_LOGE(TAG_INIT, "Failed to create LVGL task; stopping app_init_task");
-        }
-    }
-    else
-    {
-        ESP_LOGW(TAG_LVGL, "LVGL task already running; skipping creation");
-    }
 }
 
 static void exio4_toggle_selftest(void)

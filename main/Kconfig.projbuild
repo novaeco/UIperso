@@ -39,6 +39,31 @@ config UI_SMOKE_MODE
         full application UI. Intended for bring-up and diagnostics; can be
         disabled in production builds.
 
+config DIAG_RGB_TESTPATTERN
+    bool "Draw RGB hardware test pattern (panel-only)"
+    default n
+    help
+        When enabled, draw a simple vertical color bar test pattern directly
+        after the RGB panel is initialized. This bypasses LVGL to validate the
+        panel wiring and timing. Leave disabled for normal UI bring-up.
+
+config LVGL_TICK_PERIOD_US
+    int "LVGL esp_timer tick period (µs)"
+    range 500 5000
+    default 1000
+    help
+        Period (in microseconds) of the esp_timer that feeds lv_tick_inc().
+        Keep within the 0.5–5 ms range to balance responsiveness and CPU use.
+
+config LVGL_HANDLER_PERIOD_MS
+    int "LVGL handler task period (ms)"
+    range 2 20
+    default 5
+    help
+        Delay between consecutive lv_timer_handler() calls in the dedicated
+        LVGL task. 5 ms matches LVGL recommendations for smooth rendering
+        without overloading the CPU.
+
 config ENABLE_CAN
     bool "Enable CAN (TWAI) controller"
     default n
