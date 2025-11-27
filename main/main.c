@@ -48,6 +48,7 @@ static void lvgl_task(void *arg);
 static void lvgl_runtime_start(lv_display_t *disp);
 static void ui_create_smoke_screen(void);
 static void exio4_toggle_selftest(void);
+static void log_storage_state(bool storage_available);
 
 #define INIT_YIELD()            \
     do {                        \
@@ -176,6 +177,12 @@ static void lvgl_tick_cb(void *arg)
     lv_tick_inc(1);
 }
 
+static void log_storage_state(bool storage_available)
+{
+    ESP_LOGI(TAG, "storage_available=%d", storage_available ? 1 : 0);
+    logs_panel_add_log("Stockage externe: %s", storage_available ? "disponible" : "absent");
+}
+
 static inline void log_non_fatal_error(const char *what, esp_err_t err)
 {
     ESP_LOGE(TAG, "%s failed: %s (non-fatal, degraded mode)", what, esp_err_to_name(err));
@@ -228,6 +235,7 @@ static void app_init_task(void *arg)
     ESP_LOGI(TAG_INIT, "app_init_task starting on core=%d", xPortGetCoreID());
 
     bool degraded_mode = false;
+    bool storage_available = false;
     esp_log_level_set("*", ESP_LOG_INFO);
     ESP_LOGI(TAG, "ESP32-S3 UI phase 4 starting");
     log_reset_diagnostics();
@@ -304,6 +312,7 @@ static void app_init_task(void *arg)
     if (sd_err == ESP_OK)
     {
         ESP_LOGI(TAG, "microSD mounted successfully");
+        storage_available = true;
         esp_err_t test_err = sdcard_test_file();
         if (test_err != ESP_OK)
         {
@@ -323,6 +332,8 @@ static void app_init_task(void *arg)
     ESP_LOGI(TAG, "Init peripherals step 1: microSD disabled (CONFIG_ENABLE_SDCARD=0); skipping sdcard_init()");
     logs_panel_add_log("microSD désactivée (menuconfig)");
 #endif
+
+    log_storage_state(storage_available);
 
     // Yield after synchronous storage probing so IDLE tasks can run before display/touch bring-up.
     vTaskDelay(pdMS_TO_TICKS(1));
@@ -512,18 +523,30 @@ static void lvgl_runtime_start(lv_display_t *disp)
 
 static void ui_create_smoke_screen(void)
 {
-    lv_obj_t *screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0x303030), 0);
-    lv_obj_set_style_bg_opa(screen, LV_OPA_100, 0);
+#if CONFIG_UI_SMOKE_TEST
+    lv_display_t *disp = lv_disp_get_default();
+    lv_obj_t *layer = disp ? lv_layer_top(disp) : lv_screen_active();
+    if (layer == NULL)
+    {
+        ESP_LOGW(TAG, "Smoke test skipped: no active LVGL layer");
+        return;
+    }
 
-    lv_obj_t *label = lv_label_create(screen);
-    lv_label_set_text(label, "LVGL OK - render path alive");
-    lv_obj_set_style_text_color(label, lv_color_hex(0xE0E0E0), 0);
+    lv_obj_t *panel = lv_obj_create(layer);
+    lv_obj_remove_style_all(panel);
+    lv_obj_set_size(panel, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_90, LV_PART_MAIN);
+    lv_obj_set_style_border_width(panel, 0, LV_PART_MAIN);
+    lv_obj_move_foreground(panel);
+
+    lv_obj_t *label = lv_label_create(panel);
+    lv_label_set_text(label, "LVGL OK");
+    lv_obj_set_style_text_color(label, lv_color_hex(0xF4F4F4), LV_PART_MAIN);
     lv_obj_center(label);
 
-    lv_screen_load(screen);
-    lv_refr_now(NULL);
-    ESP_LOGI("UI", "minimal LVGL smoke screen loaded");
+    ESP_LOGI("UI", "LVGL smoke-test overlay enabled (CONFIG_UI_SMOKE_TEST=1)");
+#endif
 }
 
 static void exio4_toggle_selftest(void)

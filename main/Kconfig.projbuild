@@ -22,4 +22,13 @@ config I2C_SCAN_AT_BOOT
         If enabled, probe all addresses on the shared I2C bus during boot
         for diagnostics.
 
+config UI_SMOKE_TEST
+    bool "Enable LVGL smoke-test overlay"
+    default n
+    help
+        When enabled, create a simple LVGL overlay with a centered label
+        ("LVGL OK") to validate the render pipeline independently of the
+        full application UI. Intended for bring-up and diagnostics; can be
+        disabled in production builds.
+
 endmenu

@@ -340,6 +340,7 @@ esp_err_t ui_manager_init_step3_finalize(void)
 
 esp_err_t ui_manager_init(void)
 {
+    ESP_LOGI(TAG, "UI init called");
     int64_t ui_start = esp_timer_get_time();
     esp_err_t err = ui_manager_init_step1_theme();
     if (err != ESP_OK)
