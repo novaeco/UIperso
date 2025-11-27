@@ -351,7 +351,6 @@ static void app_init_task(void *arg)
         lv_display_set_default(disp);
         ESP_LOGI(TAG, "MAIN: default LVGL display set to %p", (void *)disp);
         lvgl_runtime_start(disp);
-        ui_create_smoke_screen();
     }
 
 #if CONFIG_ENABLE_GT911
@@ -440,26 +439,13 @@ static void app_init_task(void *arg)
 
 static void lvgl_task(void *arg)
 {
-    ESP_LOGI(TAG_LVGL, "task started");
+    ESP_LOGI(TAG_LVGL, "LVGL task started");
     ESP_LOGI(TAG_LVGL, "task pinned core=%d", xPortGetCoreID());
-    int64_t last_alive_log_us = esp_timer_get_time();
 
     for (;;)
     {
-        uint32_t wait_ms = lv_timer_handler();
-        if (wait_ms < 5)
-        {
-            wait_ms = 5;
-        }
-
-        const int64_t now_us = esp_timer_get_time();
-        if (now_us - last_alive_log_us >= 1000000)
-        {
-            ESP_LOGI(TAG_LVGL, "alive");
-            last_alive_log_us = now_us;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(wait_ms));
+        lv_timer_handler();
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 
@@ -492,6 +478,7 @@ static void lvgl_runtime_start(lv_display_t *disp)
             else
             {
                 ESP_LOGI(TAG_LVGL, "tick started (1ms)");
+                ui_create_smoke_screen();
             }
         }
     }
@@ -525,19 +512,18 @@ static void lvgl_runtime_start(lv_display_t *disp)
 
 static void ui_create_smoke_screen(void)
 {
-    lv_obj_t *screen = lv_scr_act();
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0x202020), 0);
+    lv_obj_t *screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x303030), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_100, 0);
 
     lv_obj_t *label = lv_label_create(screen);
-    lv_label_set_text(label, "LVGL OK / UI OK");
+    lv_label_set_text(label, "LVGL OK - render path alive");
     lv_obj_set_style_text_color(label, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_set_style_text_font(label, lv_theme_get_font_large(screen), 0);
     lv_obj_center(label);
 
-    ESP_LOGI("UI", "smoke screen created");
-    lv_obj_invalidate(lv_scr_act());
-    lv_timer_handler();
+    lv_screen_load(screen);
+    lv_refr_now(NULL);
+    ESP_LOGI("UI", "minimal LVGL smoke screen loaded");
 }
 
 static void exio4_toggle_selftest(void)
