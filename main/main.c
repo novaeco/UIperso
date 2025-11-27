@@ -24,6 +24,7 @@
 #include "rs485_driver.h"
 #include "ui_manager.h"
 #include "logs_panel.h"
+#include "ui_smoke.h"
 
 /*
  * Touch reboot loop post-mortem:
@@ -48,9 +49,6 @@ static void log_build_info(void);
 static void log_option_state(void);
 static void lvgl_task(void *arg);
 static void lvgl_runtime_start(lv_display_t *disp);
-static void ui_create_smoke_screen(void);
-static void ui_smoke_set_status(const char *status);
-static void ui_smoke_timer_cb(lv_timer_t *timer);
 static void exio4_toggle_selftest(void);
 static void log_storage_state(bool storage_available);
 
@@ -193,9 +191,6 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
 
 static esp_timer_handle_t s_lvgl_tick_timer = NULL;
 static TaskHandle_t s_lvgl_task_handle = NULL;
-static lv_obj_t *s_smoke_label = NULL;
-static lv_timer_t *s_smoke_timer = NULL;
-static uint32_t s_smoke_counter = 0;
 
 static void lvgl_tick_cb(void *arg)
 {
@@ -342,15 +337,14 @@ static void app_init_task(void *arg)
         ESP_LOGE(TAG, "RGB display not available; skipping touch init");
         logs_panel_add_log("Afficheur LVGL indisponible : tactile désactivé");
         degraded_mode = true;
-        ui_smoke_set_status("Display missing");
         ui_manager_set_degraded(true);
     }
     else
     {
         lv_display_set_default(disp);
         ESP_LOGI(TAG, "MAIN: default LVGL display set to %p", (void *)disp);
-        ui_smoke_set_status("Display ready");
         lvgl_runtime_start(disp);
+        ui_smoke_init(disp);
     }
 
 #if CONFIG_ENABLE_SDCARD
@@ -364,7 +358,6 @@ static void app_init_task(void *arg)
     {
         ESP_LOGI(TAG, "microSD mounted successfully");
         storage_available = true;
-        ui_smoke_set_status("microSD OK");
         esp_err_t test_err = sdcard_test_file();
         if (test_err != ESP_OK)
         {
@@ -484,10 +477,21 @@ static void lvgl_task(void *arg)
     ESP_LOGI(TAG_LVGL, "LVGL task started");
     ESP_LOGI(TAG_LVGL, "task pinned core=%d", xPortGetCoreID());
 
+    TickType_t last_heartbeat = xTaskGetTickCount();
+    uint32_t heartbeat_counter = 0;
+
     for (;;)
     {
         lv_timer_handler();
         vTaskDelay(pdMS_TO_TICKS(5));
+
+        const TickType_t now = xTaskGetTickCount();
+        if ((now - last_heartbeat) >= pdMS_TO_TICKS(1000))
+        {
+            heartbeat_counter++;
+            last_heartbeat = now;
+            ESP_LOGI(TAG_LVGL, "LVGL heartbeat %u", (unsigned int)heartbeat_counter);
+        }
     }
 }
 
@@ -520,14 +524,6 @@ static void lvgl_runtime_start(lv_display_t *disp)
             else
             {
                 ESP_LOGI(TAG_LVGL, "tick started (1ms)");
-                if (CONFIG_UI_SMOKE_MODE)
-                {
-                    ui_create_smoke_screen();
-                }
-                else
-                {
-                    ESP_LOGI(TAG_LVGL, "LVGL smoke-test overlay disabled (CONFIG_UI_SMOKE_MODE=0)");
-                }
             }
         }
     }
@@ -557,67 +553,6 @@ static void lvgl_runtime_start(lv_display_t *disp)
     {
         ESP_LOGW(TAG_LVGL, "LVGL task already running; skipping creation");
     }
-}
-
-static void ui_create_smoke_screen(void)
-{
-    lv_display_t *disp = lv_disp_get_default();
-    lv_obj_t *layer = disp ? lv_layer_top(disp) : lv_screen_active();
-    if (layer == NULL)
-    {
-        ESP_LOGW(TAG, "Smoke test skipped: no active LVGL layer");
-        return;
-    }
-
-    lv_obj_t *panel = lv_obj_create(layer);
-    lv_obj_remove_style_all(panel);
-    lv_obj_set_size(panel, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_90, LV_PART_MAIN);
-    lv_obj_set_style_border_width(panel, 0, LV_PART_MAIN);
-    lv_obj_move_foreground(panel);
-
-    lv_obj_t *label = lv_label_create(panel);
-    s_smoke_label = label;
-    s_smoke_counter = 0;
-    lv_label_set_text_fmt(label, "LVGL OK %lu", (unsigned long)s_smoke_counter);
-    lv_obj_set_style_text_color(label, lv_color_hex(0xF4F4F4), LV_PART_MAIN);
-    lv_obj_center(label);
-
-    if (s_smoke_timer == NULL)
-    {
-        s_smoke_timer = lv_timer_create(ui_smoke_timer_cb, 1000, NULL);
-        if (s_smoke_timer)
-        {
-            lv_timer_set_repeat_count(s_smoke_timer, -1);
-        }
-    }
-
-    ui_smoke_set_status("LVGL ready");
-    ESP_LOGI("UI", "LVGL smoke-test overlay enabled");
-}
-
-static void ui_smoke_set_status(const char *status)
-{
-    if (status == NULL)
-    {
-        return;
-    }
-
-    ESP_LOGI(TAG, "SMOKE UI: %s", status);
-}
-
-static void ui_smoke_timer_cb(lv_timer_t *timer)
-{
-    LV_UNUSED(timer);
-
-    if (s_smoke_label == NULL)
-    {
-        return;
-    }
-
-    ++s_smoke_counter;
-    lv_label_set_text_fmt(s_smoke_label, "LVGL OK %lu", (unsigned long)s_smoke_counter);
 }
 
 static void exio4_toggle_selftest(void)

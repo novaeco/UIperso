@@ -1,6 +1,7 @@
 #include "rgb_lcd.h"
 
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -63,7 +64,7 @@ static lv_display_t *s_disp = NULL;
 static esp_lcd_panel_handle_t s_panel_handle = NULL;
 static uint8_t *s_buf1 = NULL;
 static uint8_t *s_buf2 = NULL;
-static uint32_t s_flush_count = 0;
+static _Atomic uint32_t s_flush_count = 0;
 static uint32_t s_flush_count_window = 0;
 static bool s_first_flush_logged = false;
 static int64_t s_last_flush_log_us = 0;
@@ -89,7 +90,7 @@ static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px
         ESP_LOGE(TAG, "Panel draw failed (%s)", esp_err_to_name(err));
     }
 
-    s_flush_count++;
+    atomic_fetch_add_explicit(&s_flush_count, 1, memory_order_relaxed);
     s_flush_count_window++;
 
     if (!s_first_flush_logged)
@@ -112,9 +113,13 @@ static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 
 uint32_t rgb_lcd_flush_count_get_and_reset(void)
 {
-    const uint32_t count = s_flush_count;
-    s_flush_count = 0;
+    const uint32_t count = atomic_exchange_explicit(&s_flush_count, 0, memory_order_relaxed);
     return count;
+}
+
+uint32_t rgb_lcd_flush_count_get(void)
+{
+    return atomic_load_explicit(&s_flush_count, memory_order_relaxed);
 }
 
 static void rgb_lcd_init_backlight(void)
@@ -266,7 +271,7 @@ cleanup:
         heap_caps_free(s_buf2);
         s_buf1 = NULL;
         s_buf2 = NULL;
-        s_flush_count = 0;
+        atomic_store_explicit(&s_flush_count, 0, memory_order_relaxed);
         s_flush_count_window = 0;
         s_first_flush_logged = false;
         s_last_flush_log_us = 0;
