@@ -41,6 +41,7 @@
 
 static const char *TAG_INIT = "APP_INIT";
 static const char *TAG = "MAIN";
+static const char *TAG_LVGL = "LVGL";
 
 static void app_init_task(void *arg);
 static void lvgl_task(void *arg);
@@ -418,25 +419,41 @@ static void app_init_task(void *arg)
         esp_err_t timer_err = esp_timer_create(&tick_timer_args, &s_lvgl_tick_timer);
         if (timer_err != ESP_OK)
         {
-            ESP_LOGE(TAG, "Failed to create LVGL tick timer (%s)", esp_err_to_name(timer_err));
+            ESP_LOGE(TAG_LVGL, "Failed to create LVGL tick timer (%s)", esp_err_to_name(timer_err));
         }
         else
         {
             timer_err = esp_timer_start_periodic(s_lvgl_tick_timer, 1000);
             if (timer_err != ESP_OK)
             {
-                ESP_LOGE(TAG, "Failed to start LVGL tick timer (%s)", esp_err_to_name(timer_err));
+                ESP_LOGE(TAG_LVGL, "Failed to start LVGL tick timer (%s)", esp_err_to_name(timer_err));
             }
             else
             {
-                ESP_LOGI(TAG, "LVGL: tick started (esp_timer 1ms)");
+                ESP_LOGI(TAG_LVGL, "tick started (1ms)");
             }
         }
     }
     else
     {
-        ESP_LOGW(TAG, "LVGL tick timer already created; skipping");
+        ESP_LOGW(TAG_LVGL, "LVGL tick timer already created; skipping");
     }
+
+    ESP_LOGI(TAG_INIT, "app_init_task continuing: creating LVGL task on core %d", 1);
+    BaseType_t lvgl_ok = xTaskCreatePinnedToCore(
+        lvgl_task,
+        "lvgl",
+        12288,
+        NULL,
+        6,
+        NULL,
+        1);
+
+    if (lvgl_ok != pdPASS)
+    {
+        ESP_LOGE(TAG_INIT, "Failed to create LVGL task; stopping app_init_task");
+    }
+
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");
     ESP_LOGI(TAG, "UI: entrypoint called: ui_manager_init");
     int64_t t_ui = stage_begin("ui_manager_init");
@@ -459,41 +476,30 @@ static void app_init_task(void *arg)
 
     log_heap_metrics("post-init");
 
-    ESP_LOGI(TAG_INIT, "app_init_task done, starting LVGL task on core %d", 1);
-
-    BaseType_t lvgl_ok = xTaskCreatePinnedToCore(
-        lvgl_task,
-        "lvgl",
-        12288,
-        NULL,
-        6,
-        NULL,
-        1);
-
-    if (lvgl_ok != pdPASS)
-    {
-        ESP_LOGE(TAG_INIT, "Failed to create LVGL task; stopping app_init_task");
-    }
-
     vTaskDelete(NULL);
 }
 
 static void lvgl_task(void *arg)
 {
-    ESP_LOGI(TAG, "LVGL: task started on core=%d", xPortGetCoreID());
-    int64_t last_log_us = esp_timer_get_time();
+    ESP_LOGI(TAG_LVGL, "task started on core=%d", xPortGetCoreID());
+    int64_t last_alive_log_us = esp_timer_get_time();
 
     for (;;)
     {
-        lv_timer_handler();
-        const int64_t now_us = esp_timer_get_time();
-        if (now_us - last_log_us >= 1000000)
+        uint32_t wait_ms = lv_timer_handler();
+        if (wait_ms < 5)
         {
-            const uint32_t flush_count = rgb_lcd_flush_count_get_and_reset();
-            ESP_LOGI(TAG, "RGB: flush/s=%u", (unsigned int)flush_count);
-            last_log_us = now_us;
+            wait_ms = 5;
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+
+        const int64_t now_us = esp_timer_get_time();
+        if (now_us - last_alive_log_us >= 1000000)
+        {
+            ESP_LOGI(TAG_LVGL, "alive");
+            last_alive_log_us = now_us;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(wait_ms));
     }
 }
 
