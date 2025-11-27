@@ -16,7 +16,9 @@
 #include "gt911_touch.h"
 #include "i2c_bus_shared.h"
 #include "rgb_lcd.h"
+#if CONFIG_ENABLE_SDCARD
 #include "sdcard.h"
+#endif
 #include "sdkconfig.h"
 
 #include "can_driver.h"

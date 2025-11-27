@@ -7,7 +7,9 @@
 #include "cs8501.h"
 #include "logs_panel.h"
 #include "lv_theme_custom.h"
+#if CONFIG_ENABLE_SDCARD
 #include "sdcard.h"
+#endif
 
 #include <math.h>
 #include <stdbool.h>
@@ -80,6 +82,10 @@ static void sd_test_button_event_cb(lv_event_t *e)
         return;
     }
 
+#if !CONFIG_ENABLE_SDCARD
+    logs_panel_add_log("Test SD : désactivée");
+    return;
+#else
     if (!sdcard_is_mounted())
     {
         logs_panel_add_log("Test SD : carte absente");
@@ -95,6 +101,7 @@ static void sd_test_button_event_cb(lv_event_t *e)
     {
         logs_panel_add_log("Test SD : erreur (%s)", esp_err_to_name(err));
     }
+#endif
 }
 
 static void refresh_system_info(lv_timer_t *timer)
@@ -102,7 +109,13 @@ static void refresh_system_info(lv_timer_t *timer)
     (void)timer;
     if (sd_status_label)
     {
-        lv_label_set_text_fmt(sd_status_label, "SD : %s", sdcard_is_mounted() ? "montée" : "non montée");
+#if CONFIG_ENABLE_SDCARD
+        sdcard_status_t status = sdcard_get_status();
+        const char *state = status.mounted ? "montée" : "non montée";
+        lv_label_set_text_fmt(sd_status_label, "SD : %s", state);
+#else
+        lv_label_set_text(sd_status_label, "SD : désactivée");
+#endif
     }
 
     if (battery_label)
