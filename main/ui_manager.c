@@ -1,408 +1,232 @@
 #include "ui_manager.h"
 
-#include <stdbool.h>
+#include <stdint.h>
 
-#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "lvgl.h"
+#include "rgb_lcd.h"
 
-#include "dashboard.h"
-#include "logs_panel.h"
-#include "lv_theme_custom.h"
-#include "system_panel.h"
+#include "ui/panels/dashboard_panel.h"
+#include "ui/panels/peripherals_panel.h"
+#include "ui/panels/settings_panel.h"
+#include "ui/theme.h"
 
-/*
- * UI init stability notes:
- * - Previously, calling ui_manager_init() without a valid default LVGL display
- *   could trigger an LVGL assert, which the runtime escalated into
- *   esp_restart_noos (panic reset). We now validate the display upfront and
- *   propagate a non-fatal error so the system can stay alive in degraded mode
- *   when the panel or touch are missing.
- * - Re-entrance is now tolerated: calling ui_manager_init() twice simply logs
- *   a warning and returns success instead of rebuilding screens (which could
- *   re-trigger LVGL internal assertions on duplicate objects).
- */
+#define PANEL_COUNT 3
+#define ROTATION_PERIOD_MS 4500
 
 static const char *TAG = "ui_manager";
 
-static lv_obj_t *dashboard_screen = NULL;
-static lv_obj_t *system_screen = NULL;
-static lv_obj_t *logs_screen = NULL;
-static lv_obj_t *active_nav_button = NULL;
-static lv_obj_t *dashboard_nav_button = NULL;
-static lv_obj_t *system_nav_button = NULL;
-static lv_obj_t *logs_nav_button = NULL;
-static lv_obj_t *dashboard_alert = NULL;
-static lv_obj_t *system_alert = NULL;
-static lv_obj_t *logs_alert = NULL;
-static bool s_degraded = false;
-static bool s_ui_ready = false;
-static int64_t s_ui_init_start_us = 0;
-static struct
+typedef struct
 {
-    bool i2c_ok;
-    bool ch422g_ok;
-    bool gt911_ok;
-    bool touch_available;
-} s_hw_status = {0};
+    const char *name;
+    lv_obj_t *root;
+    void (*update_fn)(const system_status_t *status_ref);
+} panel_entry_t;
 
-#define UI_INIT_YIELD() vTaskDelay(pdMS_TO_TICKS(1))
+static ui_theme_styles_t s_theme = {0};
+static const system_status_t *s_status_ref = NULL;
+static lv_obj_t *s_screen = NULL;
+static lv_obj_t *s_panel_container = NULL;
+static lv_obj_t *s_nav_buttons[PANEL_COUNT] = {0};
+static panel_entry_t s_panels[PANEL_COUNT] = {0};
+static uint8_t s_active_index = 0;
+static ui_mode_t s_mode = UI_MODE_NORMAL;
+static lv_obj_t *s_mode_label = NULL;
+static lv_obj_t *s_heartbeat_label = NULL;
+static lv_timer_t *s_rotate_timer = NULL;
 
-static void degraded_details_event_cb(lv_event_t *e)
+static void set_active_panel(uint8_t index)
 {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED)
+    if (index >= PANEL_COUNT || s_panels[index].root == NULL)
     {
         return;
     }
 
-    logs_panel_add_log("Mode dégradé : vérifier CH422G, affichage RGB et tactile GT911");
-}
-
-static lv_obj_t *create_degraded_alert(lv_obj_t *screen)
-{
-    if (screen == NULL)
+    s_active_index = index;
+    lv_obj_move_foreground(s_panels[index].root);
+    for (uint8_t i = 0; i < PANEL_COUNT; i++)
     {
-        return NULL;
+        if (s_nav_buttons[i])
+        {
+            if (i == index)
+            {
+                lv_obj_add_state(s_nav_buttons[i], LV_STATE_CHECKED);
+            }
+            else
+            {
+                lv_obj_clear_state(s_nav_buttons[i], LV_STATE_CHECKED);
+            }
+        }
     }
-
-    lv_obj_t *alert = lv_obj_create(screen);
-    lv_obj_remove_style_all(alert);
-    lv_obj_set_width(alert, lv_pct(100));
-    lv_obj_set_style_radius(alert, 8, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(alert, lv_color_hex(0xC62828), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(alert, LV_OPA_80, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(alert, 12, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(alert, 8, LV_PART_MAIN);
-    lv_obj_set_style_pad_column(alert, 12, LV_PART_MAIN);
-    lv_obj_set_style_border_width(alert, 0, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(alert, 12, LV_PART_MAIN);
-    lv_obj_set_style_shadow_color(alert, lv_color_hex(0x5D1A1A), LV_PART_MAIN);
-    lv_obj_set_layout(alert, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(alert, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(alert, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_align(alert, LV_ALIGN_TOP_MID, 0, 12);
-
-    lv_obj_t *label = lv_label_create(alert);
-    lv_obj_add_style(label, lv_theme_custom_style_label(), LV_PART_MAIN);
-    lv_label_set_text(label, "Mode dégradé : matériel LCD/tactile partiellement disponible");
-
-    lv_obj_t *btn = lv_btn_create(alert);
-    lv_obj_remove_style_all(btn);
-    lv_obj_add_style(btn, lv_theme_custom_style_button(), LV_PART_MAIN);
-    lv_obj_add_style(btn, lv_theme_custom_style_button_active(), LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_pad_left(btn, 12, LV_PART_MAIN);
-    lv_obj_set_style_pad_right(btn, 12, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(btn, 6, LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(btn, 6, LV_PART_MAIN);
-    lv_obj_add_event_cb(btn, degraded_details_event_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *btn_label = lv_label_create(btn);
-    lv_obj_add_style(btn_label, lv_theme_custom_style_label(), LV_PART_MAIN);
-    lv_label_set_text(btn_label, "Détails");
-    lv_obj_center(btn_label);
-
-    lv_obj_add_flag(alert, LV_OBJ_FLAG_HIDDEN);
-
-    return alert;
 }
 
-static void set_alert_visibility(lv_obj_t *alert, bool visible)
+static void nav_event_cb(lv_event_t *e)
 {
-    if (alert == NULL)
+    uint32_t idx = (uint32_t)lv_event_get_user_data(e);
+    set_active_panel((uint8_t)idx);
+}
+
+static void update_mode_indicator(void)
+{
+    if (!s_mode_label)
     {
         return;
     }
 
-    if (visible)
+    const char *label = "Mode normal";
+    if (s_mode == UI_MODE_DEGRADED_TOUCH)
     {
-        lv_obj_clear_flag(alert, LV_OBJ_FLAG_HIDDEN);
+        label = "Mode dégradé : tactile";
     }
-    else
+    else if (s_mode == UI_MODE_DEGRADED_SD)
     {
-        lv_obj_add_flag(alert, LV_OBJ_FLAG_HIDDEN);
+        label = "Mode dégradé : microSD";
     }
+    lv_label_set_text(s_mode_label, label);
 }
 
-static void update_degraded_alerts(void)
+static void rotation_timer_cb(lv_timer_t *timer)
 {
-    set_alert_visibility(dashboard_alert, s_degraded);
-    set_alert_visibility(system_alert, s_degraded);
-    set_alert_visibility(logs_alert, s_degraded);
-}
-
-static void update_status_indicators(void)
-{
-    system_panel_set_bus_status(s_hw_status.i2c_ok, s_hw_status.ch422g_ok, s_hw_status.gt911_ok);
-    system_panel_set_touch_status(s_hw_status.touch_available);
-}
-
-static lv_obj_t *get_nav_button_for_screen(lv_obj_t *screen)
-{
-    if (screen == dashboard_screen)
-    {
-        return dashboard_nav_button;
-    }
-    if (screen == system_screen)
-    {
-        return system_nav_button;
-    }
-    if (screen == logs_screen)
-    {
-        return logs_nav_button;
-    }
-    return NULL;
-}
-
-static void set_active_nav_button(lv_obj_t *btn)
-{
-    if (active_nav_button == btn)
+    (void)timer;
+    if (s_mode != UI_MODE_DEGRADED_TOUCH)
     {
         return;
     }
-
-    if (active_nav_button)
-    {
-        lv_obj_clear_state(active_nav_button, LV_STATE_CHECKED);
-    }
-
-    active_nav_button = btn;
-
-    if (active_nav_button)
-    {
-        lv_obj_add_state(active_nav_button, LV_STATE_CHECKED);
-    }
+    set_active_panel((uint8_t)((s_active_index + 1) % PANEL_COUNT));
 }
 
-static void nav_button_event_cb(lv_event_t *e)
+static void create_navbar(lv_obj_t *parent)
 {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED)
-    {
-        return;
-    }
-    lv_obj_t *target = (lv_obj_t *)lv_event_get_user_data(e);
-    if (target)
-    {
-        lv_scr_load_anim(target, LV_SCR_LOAD_ANIM_FADE_IN, 250, 0, false);
-        set_active_nav_button(get_nav_button_for_screen(target));
-    }
-}
-
-static void create_navbar(lv_obj_t *screen)
-{
-    if (!screen)
-    {
-        return;
-    }
-
-    lv_obj_t *bar = lv_obj_create(screen);
+    lv_obj_t *bar = lv_obj_create(parent);
     lv_obj_remove_style_all(bar);
-    lv_obj_set_size(bar, lv_pct(100), 70);
-    lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x1A1F27), LV_PART_MAIN);
-    lv_obj_set_style_pad_all(bar, 8, LV_PART_MAIN);
-    lv_obj_set_style_border_color(bar, lv_color_hex(0x2C3440), LV_PART_MAIN);
-    lv_obj_set_style_border_width(bar, 1, LV_PART_MAIN);
+    lv_obj_set_width(bar, lv_pct(100));
     lv_obj_set_layout(bar, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(bar, 8, LV_PART_MAIN);
 
-    struct
-    {
-        const char *label;
-        lv_obj_t *target;
-    } buttons[] = {
-        {"Dashboard", dashboard_screen},
-        {"Système", system_screen},
-        {"Logs", logs_screen},
-    };
-
-    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++)
+    static const char *labels[PANEL_COUNT] = {"Dashboard", "Périphériques", "Réglages"};
+    for (uint8_t i = 0; i < PANEL_COUNT; i++)
     {
         lv_obj_t *btn = lv_btn_create(bar);
         lv_obj_remove_style_all(btn);
-        lv_obj_add_style(btn, lv_theme_custom_style_button(), LV_PART_MAIN);
-        lv_obj_add_style(btn, lv_theme_custom_style_button_active(), LV_PART_MAIN | LV_STATE_CHECKED);
+        lv_obj_add_style(btn, &s_theme.badge, LV_PART_MAIN);
+        lv_obj_add_event_cb(btn, nav_event_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
         lv_obj_set_flex_grow(btn, 1);
-        lv_obj_add_event_cb(btn, nav_button_event_cb, LV_EVENT_CLICKED, buttons[i].target);
 
-        lv_obj_t *label = lv_label_create(btn);
-        lv_obj_add_style(label, lv_theme_custom_style_label(), LV_PART_MAIN);
-        lv_label_set_text(label, buttons[i].label);
-        lv_obj_center(label);
+        lv_obj_t *lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, labels[i]);
+        lv_obj_center(lbl);
 
-        if (buttons[i].target == dashboard_screen && screen == dashboard_screen)
-        {
-            dashboard_nav_button = btn;
-        }
-        else if (buttons[i].target == system_screen && screen == system_screen)
-        {
-            system_nav_button = btn;
-        }
-        else if (buttons[i].target == logs_screen && screen == logs_screen)
-        {
-            logs_nav_button = btn;
-        }
+        s_nav_buttons[i] = btn;
     }
 }
 
-void ui_manager_set_degraded(bool degraded)
+esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref)
 {
-    s_degraded = degraded;
-
-    if (s_ui_ready)
+    if (disp == NULL || status_ref == NULL)
     {
-        update_degraded_alerts();
-    }
-    else if (s_degraded)
-    {
-        ESP_LOGW(TAG, "Mode dégradé activé avant l'initialisation de l'UI");
-    }
-}
-
-void ui_manager_set_bus_status(bool i2c_ok, bool ch422g_ok, bool gt911_ok)
-{
-    s_hw_status.i2c_ok = i2c_ok;
-    s_hw_status.ch422g_ok = ch422g_ok;
-    s_hw_status.gt911_ok = gt911_ok;
-
-    if (s_ui_ready)
-    {
-        update_status_indicators();
-    }
-}
-
-void ui_manager_set_touch_available(bool available)
-{
-    s_hw_status.touch_available = available;
-
-    if (s_ui_ready)
-    {
-        update_status_indicators();
-    }
-}
-
-bool ui_manager_touch_available(void)
-{
-    return s_hw_status.touch_available;
-}
-
-esp_err_t ui_manager_init_step1_theme(void)
-{
-    if (s_ui_ready)
-    {
-        ESP_LOGW(TAG, "UI already initialized; skipping duplicate init");
-        return ESP_OK;
-    }
-
-    ESP_LOGI(TAG, "ui_manager_init_step1_theme: default disp=%p, degraded=%d", (void *)lv_disp_get_default(), s_degraded);
-
-    if (s_ui_init_start_us == 0)
-    {
-        s_ui_init_start_us = esp_timer_get_time();
+        ESP_LOGE(TAG, "Invalid parameters: disp=%p status_ref=%p", (void *)disp, (const void *)status_ref);
+        return ESP_ERR_INVALID_ARG;
     }
 
     if (lv_disp_get_default() == NULL)
     {
-        ESP_LOGE(TAG, "Default LVGL display missing; UI init aborted (degraded mode)");
+        ESP_LOGE(TAG, "Default display not set before ui_manager_init");
         return ESP_ERR_INVALID_STATE;
     }
 
-    int64_t theme_start = esp_timer_get_time();
-    lv_theme_custom_init();
-    ESP_LOGI(TAG, "lv_theme_custom_init duration=%lld ms", (long long)((esp_timer_get_time() - theme_start) / 1000));
-    UI_INIT_YIELD();
+    s_status_ref = status_ref;
+    ui_theme_init(&s_theme);
+
+    s_screen = lv_obj_create(NULL);
+    lv_obj_remove_style_all(s_screen);
+    lv_obj_add_style(s_screen, &s_theme.bg, LV_PART_MAIN);
+    lv_obj_set_layout(s_screen, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(s_screen, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_screen, 10, LV_PART_MAIN);
+
+    lv_obj_t *header = lv_obj_create(s_screen);
+    lv_obj_remove_style_all(header);
+    lv_obj_set_width(header, lv_pct(100));
+    lv_obj_set_layout(header, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *title = lv_label_create(header);
+    lv_obj_add_style(title, &s_theme.title, LV_PART_MAIN);
+    lv_label_set_text(title, "UI Manager");
+
+    s_mode_label = lv_label_create(header);
+    lv_obj_add_style(s_mode_label, &s_theme.subtle, LV_PART_MAIN);
+
+    s_panel_container = lv_obj_create(s_screen);
+    lv_obj_remove_style_all(s_panel_container);
+    lv_obj_set_width(s_panel_container, lv_pct(100));
+    lv_obj_set_flex_grow(s_panel_container, 1);
+    lv_obj_set_layout(s_panel_container, LV_LAYOUT_GRID);
+    lv_coord_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+    lv_coord_t row_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+    lv_obj_set_grid_dsc_array(s_panel_container, col_dsc, row_dsc);
+
+    s_panels[0].name = "dashboard";
+    s_panels[0].root = dashboard_panel_create(s_panel_container, &s_theme, s_status_ref);
+    s_panels[0].update_fn = dashboard_panel_update;
+
+    s_panels[1].name = "peripherals";
+    s_panels[1].root = peripherals_panel_create(s_panel_container, &s_theme, s_status_ref);
+    s_panels[1].update_fn = peripherals_panel_update;
+
+    s_panels[2].name = "settings";
+    s_panels[2].root = settings_panel_create(s_panel_container, &s_theme, s_status_ref);
+    s_panels[2].update_fn = settings_panel_update;
+
+    for (uint8_t i = 0; i < PANEL_COUNT; i++)
+    {
+        if (s_panels[i].root)
+        {
+            lv_obj_set_grid_cell(s_panels[i].root, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
+        }
+    }
+
+    create_navbar(s_screen);
+    s_heartbeat_label = lv_label_create(s_screen);
+    lv_obj_add_style(s_heartbeat_label, &s_theme.subtle, LV_PART_MAIN);
+
+    set_active_panel(0);
+    update_mode_indicator();
+    lv_scr_load(s_screen);
+
+    s_rotate_timer = lv_timer_create(rotation_timer_cb, ROTATION_PERIOD_MS, NULL);
     return ESP_OK;
 }
 
-esp_err_t ui_manager_init_step2_screens(void)
+void ui_manager_set_mode(ui_mode_t mode)
 {
-    if (s_ui_ready)
-    {
-        return ESP_OK;
-    }
-
-    dashboard_screen = dashboard_create();
-    UI_INIT_YIELD();
-    system_screen = system_panel_create();
-    UI_INIT_YIELD();
-    logs_screen = logs_panel_create();
-    UI_INIT_YIELD();
-
-    if (!dashboard_screen || !system_screen || !logs_screen)
-    {
-        ESP_LOGE(TAG, "Failed to create one or more screens (dashboard/system/logs)");
-        return ESP_ERR_NO_MEM;
-    }
-    return ESP_OK;
+    s_mode = mode;
+    update_mode_indicator();
 }
 
-esp_err_t ui_manager_init_step3_finalize(void)
+void ui_manager_tick_1s(void)
 {
-    if (s_ui_ready)
+    if (!s_status_ref)
     {
-        return ESP_OK;
+        return;
     }
 
-    if (!dashboard_screen || !system_screen || !logs_screen)
+    for (uint8_t i = 0; i < PANEL_COUNT; i++)
     {
-        ESP_LOGE(TAG, "ui_manager_init_step3_finalize called without screens ready");
-        return ESP_ERR_INVALID_STATE;
+        if (s_panels[i].update_fn)
+        {
+            s_panels[i].update_fn(s_status_ref);
+        }
     }
 
-    create_navbar(dashboard_screen);
-    create_navbar(system_screen);
-    create_navbar(logs_screen);
-
-    dashboard_alert = create_degraded_alert(dashboard_screen);
-    system_alert = create_degraded_alert(system_screen);
-    logs_alert = create_degraded_alert(logs_screen);
-
-    s_ui_ready = true;
-    update_degraded_alerts();
-    update_status_indicators();
-
-    set_active_nav_button(dashboard_nav_button);
-
-    lv_scr_load(dashboard_screen);
-
-    logs_panel_add_log("UI initialisée");
-    if (s_ui_init_start_us == 0)
+    if (s_heartbeat_label)
     {
-        s_ui_init_start_us = esp_timer_get_time();
+        const uint32_t flush = rgb_lcd_flush_count_get();
+        const uint32_t uptime = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+        lv_label_set_text_fmt(s_heartbeat_label, "uptime %us | flush %u", uptime, flush);
     }
-    int64_t total_ms = (esp_timer_get_time() - s_ui_init_start_us) / 1000;
-    ESP_LOGI(TAG, "Interface LVGL prête (total %lld ms)", (long long)total_ms);
-
-    return ESP_OK;
 }
 
-esp_err_t ui_manager_init(void)
-{
-    ESP_LOGI(TAG, "UI init called");
-    int64_t ui_start = esp_timer_get_time();
-    esp_err_t err = ui_manager_init_step1_theme();
-    if (err != ESP_OK)
-    {
-        return err;
-    }
-
-    UI_INIT_YIELD();
-    err = ui_manager_init_step2_screens();
-    if (err != ESP_OK)
-    {
-        return err;
-    }
-
-    UI_INIT_YIELD();
-    err = ui_manager_init_step3_finalize();
-    if (err != ESP_OK)
-    {
-        return err;
-    }
-
-    ESP_LOGI(TAG, "ui_manager_init total %lld ms", (long long)((esp_timer_get_time() - ui_start) / 1000));
-    return ESP_OK;
-}

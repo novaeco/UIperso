@@ -1,22 +1,26 @@
 #pragma once
 
-#include <stdbool.h>
-
 #include "esp_err.h"
+#include "lvgl.h"
+
+#include "components/system_status/system_status.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-esp_err_t ui_manager_init(void);
-esp_err_t ui_manager_init_step1_theme(void);
-esp_err_t ui_manager_init_step2_screens(void);
-esp_err_t ui_manager_init_step3_finalize(void);
-void ui_manager_set_degraded(bool degraded);
-void ui_manager_set_bus_status(bool i2c_ok, bool ch422g_ok, bool gt911_ok);
-void ui_manager_set_touch_available(bool available);
-bool ui_manager_touch_available(void);
+typedef enum
+{
+    UI_MODE_NORMAL = 0,
+    UI_MODE_DEGRADED_TOUCH,
+    UI_MODE_DEGRADED_SD,
+} ui_mode_t;
+
+esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref);
+void ui_manager_set_mode(ui_mode_t mode);
+void ui_manager_tick_1s(void);
 
 #ifdef __cplusplus
 }
 #endif
+

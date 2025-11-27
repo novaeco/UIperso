@@ -25,6 +25,9 @@ typedef struct
     float vbat;
     bool charging_known;
     bool charging;
+
+    bool sd_mounted;
+    bool touch_available;
 } system_status_t;
 
 void system_status_init(void);
@@ -34,7 +37,10 @@ void system_status_set_rs485_ok(bool ok);
 void system_status_add_rs485_tx(size_t bytes);
 void system_status_add_rs485_rx(size_t bytes);
 void system_status_set_power(bool ok, bool telemetry_available, float vbat, bool charging_known, bool charging);
+void system_status_set_sd_mounted(bool mounted);
+void system_status_set_touch_available(bool available);
 void system_status_get(system_status_t *out_status);
+const system_status_t *system_status_get_ref(void);
 
 #ifdef __cplusplus
 }

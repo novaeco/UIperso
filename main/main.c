@@ -212,12 +212,35 @@ static void log_storage_state(bool storage_available)
 {
     ESP_LOGI(TAG, "storage_available=%d", storage_available ? 1 : 0);
     logs_panel_add_log("Stockage externe: %s", storage_available ? "disponible" : "absent");
+    system_status_set_sd_mounted(storage_available);
+    update_ui_mode_from_status();
+}
+
+static void update_ui_mode_from_status(void)
+{
+    system_status_t status = {0};
+    system_status_get(&status);
+    if (!status.touch_available)
+    {
+        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
+    }
+    else if (!status.sd_mounted)
+    {
+        ui_manager_set_mode(UI_MODE_DEGRADED_SD);
+    }
+    else
+    {
+        ui_manager_set_mode(UI_MODE_NORMAL);
+    }
 }
 
 static void publish_hw_status(bool i2c_ok, bool ch422g_ok, bool gt911_ok, bool touch_available)
 {
-    ui_manager_set_bus_status(i2c_ok, ch422g_ok, gt911_ok);
-    ui_manager_set_touch_available(touch_available);
+    (void)i2c_ok;
+    (void)ch422g_ok;
+    (void)gt911_ok;
+    system_status_set_touch_available(touch_available);
+    update_ui_mode_from_status();
 }
 
 static inline void log_non_fatal_error(const char *what, esp_err_t err)
@@ -331,7 +354,7 @@ static void app_init_task(void *arg)
         ESP_LOGE(TAG, "Shared I2C bus init failed: %s", esp_err_to_name(i2c_err));
         logs_panel_add_log("I2C partagé: échec (%s)", esp_err_to_name(i2c_err));
         degraded_mode = true;
-        ui_manager_set_degraded(true);
+        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
     }
     else
     {
@@ -345,7 +368,7 @@ static void app_init_task(void *arg)
     {
         ESP_LOGW(TAG, "CH422G init failed (0x%x). Running without IO expander features.", ch_err);
         degraded_mode = true;
-        ui_manager_set_degraded(true);
+        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
     }
     else
     {
@@ -370,7 +393,7 @@ static void app_init_task(void *arg)
             ESP_LOGW(TAG, "EXIO6 (LCD_VDD_EN) enable failed (%s); continuing degraded", esp_err_to_name(lcd_err));
             logs_panel_add_log("LCD_VDD_EN: échec (%s)", esp_err_to_name(lcd_err));
             degraded_mode = true;
-            ui_manager_set_degraded(true);
+            ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
         }
         else
         {
@@ -386,7 +409,7 @@ static void app_init_task(void *arg)
             ESP_LOGW(TAG, "EXIO2 (DISP/backlight) enable failed (%s); UI will start without panel", esp_err_to_name(bl_err));
             logs_panel_add_log("Backlight: échec (%s)", esp_err_to_name(bl_err));
             degraded_mode = true;
-            ui_manager_set_degraded(true);
+            ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
         }
         else
         {
@@ -399,7 +422,7 @@ static void app_init_task(void *arg)
         ESP_LOGW(TAG, "IO extension unavailable; skipping LCD_VDD_EN / DISP sequencing (UI will start degraded)");
         logs_panel_add_log("Extenseur IO indisponible : séquence LCD sautée");
         degraded_mode = true;
-        ui_manager_set_degraded(true);
+        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
     }
 
     ESP_LOGI(TAG, "After CH422G/LCD sequencing, before LVGL core init");
@@ -421,7 +444,7 @@ static void app_init_task(void *arg)
         ESP_LOGE(TAG, "RGB display not available; skipping touch init");
         logs_panel_add_log("Afficheur LVGL indisponible : tactile désactivé");
         degraded_mode = true;
-        ui_manager_set_degraded(true);
+        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
     }
     else
     {
@@ -477,7 +500,7 @@ static void app_init_task(void *arg)
         logs_panel_add_log("GT911: init échouée (%s), tactile indisponible", esp_err_to_name(touch_err));
         touch_available = gt911_touch_available();
         degraded_mode = true;
-        ui_manager_set_degraded(true);
+        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
     }
     else
     {
@@ -490,7 +513,7 @@ static void app_init_task(void *arg)
     logs_panel_add_log("GT911 désactivé (CONFIG_ENABLE_TOUCH=0)");
     touch_available = false;
     degraded_mode = true;
-    ui_manager_set_degraded(true);
+    ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
 #endif
     publish_hw_status(i2c_ok, ch422g_ok, gt911_ok, touch_available);
     ESP_LOGI(TAG_INIT, "I2C ok=%d, CH422G ok=%d, GT911 ok=%d, touch_available=%d",
@@ -514,7 +537,7 @@ static void app_init_task(void *arg)
                  esp_err_to_name(can_err));
         logs_panel_add_log("CAN: init échouée (%s), CAN désactivé", esp_err_to_name(can_err));
         degraded_mode = true;
-        ui_manager_set_degraded(true);
+        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
         system_status_set_can_ok(false);
     }
     else
@@ -551,7 +574,7 @@ static void app_init_task(void *arg)
     {
         log_non_fatal_error("RS485 init", rs485_err);
         degraded_mode = true;
-        ui_manager_set_degraded(true);
+        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
         system_status_set_rs485_ok(false);
     }
     else
@@ -583,18 +606,25 @@ static void app_init_task(void *arg)
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");
     ESP_LOGI(TAG, "UI: entrypoint called: ui_manager_init");
     int64_t t_ui = stage_begin("ui_manager_init");
-    esp_err_t ui_err = ui_manager_init();
+    esp_err_t ui_err = ui_manager_init(disp, system_status_get_ref());
     stage_end("ui_manager_init", t_ui);
 
     if (ui_err != ESP_OK)
     {
         log_non_fatal_error("UI manager init", ui_err);
         degraded_mode = true;
-        ui_manager_set_degraded(true);
+        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
     }
     else
     {
-        ui_manager_set_degraded(degraded_mode);
+        if (degraded_mode)
+        {
+            ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
+        }
+        else
+        {
+            update_ui_mode_from_status();
+        }
         ESP_LOGI(TAG, "MAIN: ui init done");
         ESP_LOGI(TAG, "MAIN: active screen=%p", (void *)lv_scr_act());
         lv_obj_invalidate(lv_screen_active());
@@ -628,6 +658,7 @@ static void lvgl_task(void *arg)
         {
             heartbeat_counter++;
             last_heartbeat = now;
+            ui_manager_tick_1s();
             ESP_LOGI(TAG_LVGL, "LVGL heartbeat %u", (unsigned int)heartbeat_counter);
         }
     }

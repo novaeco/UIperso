@@ -37,6 +37,26 @@ void system_status_init(void)
     get_lock();
 }
 
+static void set_sd_mounted_locked(void *arg)
+{
+    s_status.sd_mounted = (arg != NULL);
+}
+
+void system_status_set_sd_mounted(bool mounted)
+{
+    with_lock(set_sd_mounted_locked, mounted ? (void *)1 : NULL);
+}
+
+static void set_touch_available_locked(void *arg)
+{
+    s_status.touch_available = (arg != NULL);
+}
+
+void system_status_set_touch_available(bool available)
+{
+    with_lock(set_touch_available_locked, available ? (void *)1 : NULL);
+}
+
 static void set_can_ok_locked(void *arg)
 {
     s_status.can_ok = (arg != NULL);
@@ -154,5 +174,10 @@ void system_status_get(system_status_t *out_status)
         return;
     }
     with_lock(copy_status_locked, out_status);
+}
+
+const system_status_t *system_status_get_ref(void)
+{
+    return &s_status;
 }
 
