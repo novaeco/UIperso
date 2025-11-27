@@ -109,6 +109,7 @@ void rgb_lcd_init(void)
     }
 
     const int64_t t_start = esp_timer_get_time();
+    bool success = false;
 
     if (!esp_psram_is_initialized())
     {
@@ -123,11 +124,7 @@ void rgb_lcd_init(void)
     if ((s_buf1 == NULL) || (s_buf2 == NULL))
     {
         ESP_LOGE(TAG, "LVGL draw buffer allocation failed; skipping RGB LCD init");
-        heap_caps_free(s_buf1);
-        heap_caps_free(s_buf2);
-        s_buf1 = NULL;
-        s_buf2 = NULL;
-        return;
+        goto cleanup;
     }
 
     esp_lcd_rgb_timing_t timing = {
@@ -176,7 +173,7 @@ void rgb_lcd_init(void)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to create RGB panel: %s", esp_err_to_name(err));
-        return;
+        goto cleanup;
     }
 
     // Give IDLE0 a chance to run while the panel powers up.
@@ -186,7 +183,7 @@ void rgb_lcd_init(void)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "RGB panel reset failed: %s", esp_err_to_name(err));
-        return;
+        goto cleanup;
     }
 
     vTaskDelay(pdMS_TO_TICKS(1));
@@ -195,7 +192,7 @@ void rgb_lcd_init(void)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "RGB panel init failed: %s", esp_err_to_name(err));
-        return;
+        goto cleanup;
     }
 
     vTaskDelay(pdMS_TO_TICKS(1));
@@ -208,12 +205,17 @@ void rgb_lcd_init(void)
     else if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "RGB panel on/off failed: %s", esp_err_to_name(err));
-        return;
+        goto cleanup;
     }
 
     rgb_lcd_init_backlight();
 
     s_disp = lv_display_create(LCD_H_RES, LCD_V_RES);
+    if (s_disp == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create LVGL display object");
+        goto cleanup;
+    }
     lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(s_disp, s_buf1, s_buf2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(s_disp, rgb_lcd_flush);
@@ -221,6 +223,31 @@ void rgb_lcd_init(void)
 
     const int64_t elapsed_ms = (esp_timer_get_time() - t_start) / 1000;
     ESP_LOGI(TAG, "RGB panel initialized (%dx%d) in %lld ms", LCD_H_RES, LCD_V_RES, (long long)elapsed_ms);
+    success = true;
+    return;
+
+cleanup:
+    if (!success)
+    {
+        if (s_disp)
+        {
+            lv_display_delete(s_disp);
+            s_disp = NULL;
+        }
+
+        if (s_panel_handle)
+        {
+            (void)esp_lcd_panel_del(s_panel_handle);
+            s_panel_handle = NULL;
+        }
+
+        heap_caps_free(s_buf1);
+        heap_caps_free(s_buf2);
+        s_buf1 = NULL;
+        s_buf2 = NULL;
+        s_flush_count = 0;
+        ESP_LOGW(TAG, "RGB panel init aborted, resources released");
+    }
 }
 
 lv_display_t *rgb_lcd_get_disp(void)

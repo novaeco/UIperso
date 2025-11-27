@@ -3,6 +3,9 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #define RS485_UART_NUM UART_NUM_1
 #define RS485_TXD_PIN GPIO_NUM_15  // TX -> RS485_TXD (Waveshare 7B wiring)
@@ -11,6 +14,7 @@
 
 static const char *TAG = "RS485";
 static bool s_uart_initialized = false;
+static SemaphoreHandle_t s_rs485_lock = NULL;
 
 static inline void rs485_set_transmit(bool enable)
 {
@@ -22,6 +26,15 @@ esp_err_t rs485_init(void)
     if (s_uart_initialized)
     {
         return ESP_OK;
+    }
+
+    if (s_rs485_lock == NULL)
+    {
+        s_rs485_lock = xSemaphoreCreateMutex();
+        if (s_rs485_lock == NULL)
+        {
+            return ESP_ERR_NO_MEM;
+        }
     }
 
     const uart_config_t uart_config = {
@@ -47,7 +60,7 @@ esp_err_t rs485_init(void)
         return err;
     }
 
-    err = uart_driver_install(RS485_UART_NUM, 1024, 0, 0, NULL, 0);
+    err = uart_driver_install(RS485_UART_NUM, 1024, 256, 0, NULL, 0);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "uart_driver_install failed (%s)", esp_err_to_name(err));
@@ -81,23 +94,37 @@ esp_err_t rs485_write(const uint8_t *data, size_t len, TickType_t timeout)
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (s_rs485_lock == NULL)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(s_rs485_lock, pdMS_TO_TICKS(50)) != pdTRUE)
+    {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    esp_err_t err = ESP_OK;
     rs485_set_transmit(true);
+    esp_rom_delay_us(50);
     int written = uart_write_bytes(RS485_UART_NUM, (const char *)data, len);
     if (written < 0 || (size_t)written != len)
     {
-        rs485_set_transmit(false);
         ESP_LOGE(TAG, "uart_write_bytes failed");
-        return ESP_FAIL;
+        err = ESP_FAIL;
+        goto exit;
     }
 
-    esp_err_t err = uart_wait_tx_done(RS485_UART_NUM, timeout);
-    rs485_set_transmit(false);
+    err = uart_wait_tx_done(RS485_UART_NUM, timeout);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "uart_wait_tx_done failed (%s)", esp_err_to_name(err));
-        return err;
     }
-    return ESP_OK;
+
+exit:
+    rs485_set_transmit(false);
+    xSemaphoreGive(s_rs485_lock);
+    return err;
 }
 
 esp_err_t rs485_read(uint8_t *data, size_t max_len, size_t *out_len, TickType_t timeout)

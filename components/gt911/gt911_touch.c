@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "sdkconfig.h"
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
@@ -21,12 +22,9 @@
  *   invalid display binding during indev creation.
  * - The touch stack now defends against those scenarios by short-circuiting
  *   when LVGL or the target display is unavailable, and by letting callers
- *   disable the LVGL attachment entirely (GT911_ENABLE=0) without panicking.
+ *   disable the LVGL attachment entirely (CONFIG_ENABLE_GT911=0) without
+ *   panicking.
  */
-
-#ifndef GT911_ENABLE
-#define GT911_ENABLE 1
-#endif
 
 #define GT911_I2C_ADDRESS              0x5D
 #define GT911_I2C_TIMEOUT_MS           i2c_bus_shared_timeout_ms()
@@ -96,6 +94,13 @@ static esp_err_t gt911_retry_write_to_device(const uint8_t *payload, size_t leng
     }
 
     esp_err_t err = ESP_FAIL;
+    const TickType_t lock_ticks = pdMS_TO_TICKS(GT911_I2C_TIMEOUT_MS);
+    err = i2c_bus_shared_lock(lock_ticks);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "GT911 I2C lock failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     for (int attempt = 1; attempt <= GT911_I2C_RETRIES; ++attempt)
     {
@@ -114,6 +119,8 @@ static esp_err_t gt911_retry_write_to_device(const uint8_t *payload, size_t leng
         vTaskDelay(pdMS_TO_TICKS(GT911_I2C_RETRY_DELAY_MS));
     }
 
+    i2c_bus_shared_unlock();
+
     return err;
 }
 
@@ -125,6 +132,13 @@ static esp_err_t gt911_retry_write_read(const uint8_t *write_buf, size_t write_l
     }
 
     esp_err_t err = ESP_FAIL;
+    const TickType_t lock_ticks = pdMS_TO_TICKS(GT911_I2C_TIMEOUT_MS);
+    err = i2c_bus_shared_lock(lock_ticks);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "GT911 I2C lock failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     for (int attempt = 1; attempt <= GT911_I2C_RETRIES; ++attempt)
     {
@@ -144,6 +158,8 @@ static esp_err_t gt911_retry_write_read(const uint8_t *write_buf, size_t write_l
         ESP_LOGW(TAG, "GT911 write-read attempt %d/%d failed: %s", attempt, GT911_I2C_RETRIES, esp_err_to_name(err));
         vTaskDelay(pdMS_TO_TICKS(GT911_I2C_RETRY_DELAY_MS));
     }
+
+    i2c_bus_shared_unlock();
 
     return err;
 }
@@ -464,8 +480,8 @@ static esp_err_t gt911_update_config(void)
 
 esp_err_t gt911_init(lv_display_t *disp)
 {
-#if !GT911_ENABLE
-    ESP_LOGW(TAG, "GT911 integration disabled at compile time (GT911_ENABLE=0); skipping init");
+#if !CONFIG_ENABLE_GT911
+    ESP_LOGW(TAG, "GT911 integration disabled at compile time (CONFIG_ENABLE_GT911=0); skipping init");
     return ESP_ERR_NOT_SUPPORTED;
 #endif
 

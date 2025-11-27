@@ -41,6 +41,12 @@ static esp_err_t ch422g_write_outputs(void)
 
     const uint8_t payload = s_ctx.outputs;
     esp_err_t err = ESP_FAIL;
+    const esp_err_t lock_err = i2c_bus_shared_lock(pdMS_TO_TICKS(CH422G_I2C_TIMEOUT_MS));
+    if (lock_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "CH422G I2C lock failed: %s", esp_err_to_name(lock_err));
+        return lock_err;
+    }
 
     for (int attempt = 1; attempt <= CH422G_I2C_RETRIES; ++attempt)
     {
@@ -60,6 +66,8 @@ static esp_err_t ch422g_write_outputs(void)
         ESP_LOGW(TAG, "IO extension write failed after %d attempts (%s); disabling IO expander access", CH422G_I2C_RETRIES, esp_err_to_name(err));
         s_ctx.io_ready = false;
     }
+
+    i2c_bus_shared_unlock();
 
     return err;
 }

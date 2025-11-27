@@ -2,6 +2,8 @@
 
 #include "esp_check.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #define SHARED_I2C_PORT         I2C_NUM_0
 #define SHARED_I2C_SDA_GPIO     GPIO_NUM_8
@@ -11,9 +13,19 @@
 
 static const char *TAG = "i2c_bus_shared";
 static i2c_master_bus_handle_t s_bus = NULL;
+static SemaphoreHandle_t s_bus_lock = NULL;
 
 esp_err_t i2c_bus_shared_init(void)
 {
+    if (s_bus_lock == NULL)
+    {
+        s_bus_lock = xSemaphoreCreateMutex();
+        if (s_bus_lock == NULL)
+        {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
     if (s_bus != NULL)
     {
         return ESP_OK;
@@ -83,5 +95,28 @@ esp_err_t i2c_bus_shared_add_device(uint16_t address,
     };
 
     return i2c_master_bus_add_device(s_bus, &dev_cfg, ret_handle);
+}
+
+esp_err_t i2c_bus_shared_lock(TickType_t ticks_to_wait)
+{
+    if (s_bus_lock == NULL)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(s_bus_lock, ticks_to_wait) != pdTRUE)
+    {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    return ESP_OK;
+}
+
+void i2c_bus_shared_unlock(void)
+{
+    if (s_bus_lock)
+    {
+        xSemaphoreGive(s_bus_lock);
+    }
 }
 

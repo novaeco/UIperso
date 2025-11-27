@@ -39,10 +39,6 @@
  *   non-critical errors) instead of rebooting.
  */
 
-#ifndef GT911_ENABLE
-#define GT911_ENABLE 1
-#endif
-
 static const char *TAG_INIT = "APP_INIT";
 static const char *TAG = "MAIN";
 
@@ -122,6 +118,11 @@ static void log_reset_diagnostics(void)
 
 static void i2c_scan_bus(i2c_master_bus_handle_t bus)
 {
+#if !CONFIG_I2C_SCAN_AT_BOOT
+    ESP_LOGI(TAG, "I2C scan skipped (CONFIG_I2C_SCAN_AT_BOOT=0)");
+    return;
+#endif
+
     if (bus == NULL)
     {
         ESP_LOGW(TAG, "I2C scan skipped: bus not initialized");
@@ -130,6 +131,13 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
 
     ESP_LOGI(TAG, "I2C scan on shared bus");
     logs_panel_add_log("Scan I2C sur bus partagé");
+    const esp_err_t lock_err = i2c_bus_shared_lock(pdMS_TO_TICKS(i2c_bus_shared_timeout_ms()));
+    if (lock_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "I2C scan lock failed: %s", esp_err_to_name(lock_err));
+        return;
+    }
+
     int devices = 0;
     for (uint8_t addr = 1; addr < 0x7F; ++addr)
     {
@@ -147,6 +155,8 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
             vTaskDelay(pdMS_TO_TICKS(1));
         }
     }
+
+    i2c_bus_shared_unlock();
 
     if (devices == 0)
     {
@@ -338,7 +348,7 @@ static void app_init_task(void *arg)
         ESP_LOGI(TAG, "MAIN: default LVGL display set to %p", (void *)disp);
     }
 
-#if GT911_ENABLE
+#if CONFIG_ENABLE_GT911
     ESP_LOGI(TAG, "Before GT911 init (display %s)", disp ? "ready" : "missing");
     logs_panel_add_log("Init GT911 en cours");
     esp_err_t touch_err = gt911_init(disp);
@@ -354,8 +364,8 @@ static void app_init_task(void *arg)
         ESP_LOGI(TAG, "GT911 successfully attached to LVGL (touch enabled)");
     }
 #else
-    ESP_LOGW(TAG, "GT911 disabled at compile-time (GT911_ENABLE=0); skipping touch attachment");
-    logs_panel_add_log("GT911 désactivé (GT911_ENABLE=0)");
+    ESP_LOGW(TAG, "GT911 disabled at compile-time (CONFIG_ENABLE_GT911=0); skipping touch attachment");
+    logs_panel_add_log("GT911 désactivé (CONFIG_ENABLE_GT911=0)");
     degraded_mode = true;
     ui_manager_set_degraded(true);
 #endif
@@ -419,7 +429,7 @@ static void app_init_task(void *arg)
             }
             else
             {
-                ESP_LOGI(TAG, "LVGL: tick timer started (1ms)");
+                ESP_LOGI(TAG, "LVGL: tick started (esp_timer 1ms)");
             }
         }
     }
