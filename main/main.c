@@ -459,6 +459,8 @@ static void app_init_task(void *arg)
     {
         lv_display_set_default(disp);
         ESP_LOGI(TAG, "MAIN: default LVGL display set to %p", (void *)disp);
+        ui_smoke_boot_screen();
+        lv_timer_handler();
         lvgl_runtime_start(disp);
         ui_smoke_init(disp);
     }

@@ -1,6 +1,7 @@
 #include "ui_smoke.h"
 
 #include "esp_log.h"
+#include <stdbool.h>
 
 #include "rgb_lcd.h"
 
@@ -79,4 +80,33 @@ void ui_smoke_init(lv_display_t *disp)
     }
 
     ESP_LOGI(TAG_SMOKE, "SMOKE UI ready");
+}
+
+void ui_smoke_boot_screen(void)
+{
+    static bool boot_screen_created = false;
+
+    if (boot_screen_created)
+    {
+        return;
+    }
+
+    lv_obj_t *screen = lv_screen_active();
+    if (screen == NULL)
+    {
+        ESP_LOGW(TAG_SMOKE, "Smoke screen skipped: no active LVGL screen");
+        return;
+    }
+
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x0F172A), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(screen, LV_OPA_100, LV_PART_MAIN);
+
+    lv_obj_t *label = lv_label_create(screen);
+    lv_label_set_text(label, "BOOT OK");
+    lv_obj_set_style_text_color(label, lv_color_hex(0xF8FAFC), LV_PART_MAIN);
+    lv_obj_set_style_text_font(label, LV_FONT_DEFAULT, LV_PART_MAIN);
+    lv_obj_center(label);
+
+    ESP_LOGI(TAG_SMOKE, "UI: smoke screen created");
+    boot_screen_created = true;
 }
