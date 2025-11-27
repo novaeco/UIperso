@@ -1,11 +1,25 @@
 menu "Application Configuration"
 
+config ENABLE_GT911
+    bool "Enable GT911 touch controller"
+    default y
+    help
+        Allow GT911 touch controller initialization and LVGL input device
+        registration. Disable to skip touch bring-up at boot.
+
 config ENABLE_SDCARD
     bool "Enable microSD (external storage)"
-    default y
+    default n
     help
         Enable initialization and mounting of the external microSD card.
         Disable to skip any SD card probing and boot without external
         storage access.
+
+config I2C_SCAN_AT_BOOT
+    bool "Scan shared I2C bus at boot"
+    default n
+    help
+        If enabled, probe all addresses on the shared I2C bus during boot
+        for diagnostics.
 
 endmenu

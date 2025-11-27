@@ -2,6 +2,7 @@
 
 #include "driver/i2c_master.h"
 #include "esp_err.h"
+#include "freertos/FreeRTOS.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +36,12 @@ uint32_t i2c_bus_shared_default_speed_hz(void);
 esp_err_t i2c_bus_shared_add_device(uint16_t address,
                                     uint32_t scl_speed_hz,
                                     i2c_master_dev_handle_t *ret_handle);
+
+/**
+ * @brief Lock/unlock the shared I2C bus for thread-safe access.
+ */
+esp_err_t i2c_bus_shared_lock(TickType_t ticks_to_wait);
+void i2c_bus_shared_unlock(void);
 
 #ifdef __cplusplus
 }
