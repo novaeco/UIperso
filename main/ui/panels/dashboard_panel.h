@@ -2,7 +2,7 @@
 
 #include "lvgl.h"
 
-#include "components/system_status/system_status.h"
+#include "system_status.h"
 #include "ui/theme.h"
 
 #ifdef __cplusplus

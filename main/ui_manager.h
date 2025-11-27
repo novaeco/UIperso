@@ -3,7 +3,7 @@
 #include "esp_err.h"
 #include "lvgl.h"
 
-#include "components/system_status/system_status.h"
+#include "system_status.h"
 
 #ifdef __cplusplus
 extern "C" {
