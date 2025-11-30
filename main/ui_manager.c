@@ -8,11 +8,12 @@
 #include "rgb_lcd.h"
 
 #include "ui/panels/dashboard_panel.h"
-#include "ui/panels/peripherals_panel.h"
+#include "ui/panels/reptiles_panel.h"
+#include "ui/panels/logs_panel_view.h"
 #include "ui/panels/settings_panel.h"
 #include "ui/theme.h"
 
-#define PANEL_COUNT 3
+#define PANEL_COUNT 4
 #define ROTATION_PERIOD_MS 4500
 
 static const char *TAG = "ui_manager";
@@ -21,11 +22,12 @@ typedef struct
 {
     const char *name;
     lv_obj_t *root;
-    void (*update_fn)(const system_status_t *status_ref);
+    void (*update_fn)(const system_status_t *status_ref, const ui_manager_ctx_t *ctx);
 } panel_entry_t;
 
 static ui_theme_styles_t s_theme = {0};
 static const system_status_t *s_status_ref = NULL;
+static const ui_manager_ctx_t *s_ctx = NULL;
 static lv_obj_t *s_screen = NULL;
 static lv_obj_t *s_panel_container = NULL;
 static lv_obj_t *s_nav_buttons[PANEL_COUNT] = {0};
@@ -38,6 +40,28 @@ static lv_obj_t *s_ready_label = NULL;
 static lv_timer_t *s_rotate_timer = NULL;
 static const lv_coord_t s_panel_col_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
 static const lv_coord_t s_panel_row_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+
+static void update_dashboard_panel(const system_status_t *status_ref, const ui_manager_ctx_t *ctx)
+{
+    dashboard_panel_update(status_ref, ctx->reptiles, ctx->wifi_state);
+}
+
+static void update_reptiles_panel(const system_status_t *status_ref, const ui_manager_ctx_t *ctx)
+{
+    (void)status_ref;
+    reptiles_panel_update(ctx->reptiles);
+}
+
+static void update_logs_panel(const system_status_t *status_ref, const ui_manager_ctx_t *ctx)
+{
+    (void)status_ref;
+    logs_panel_view_update(ctx->reptiles);
+}
+
+static void update_settings_panel(const system_status_t *status_ref, const ui_manager_ctx_t *ctx)
+{
+    settings_panel_update(status_ref, ctx->wifi_creds);
+}
 
 static void set_active_panel(uint8_t index)
 {
@@ -127,7 +151,7 @@ static void create_navbar(lv_obj_t *parent)
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_all(bar, 8, LV_PART_MAIN);
 
-    static const char *labels[PANEL_COUNT] = {"Dashboard", "Périphériques", "Réglages"};
+    static const char *labels[PANEL_COUNT] = {"Dashboard", "Reptiles", "Documents", "Paramètres"};
     for (uint8_t i = 0; i < PANEL_COUNT; i++)
     {
         lv_obj_t *btn = lv_btn_create(bar);
@@ -144,11 +168,11 @@ static void create_navbar(lv_obj_t *parent)
     }
 }
 
-esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref)
+esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref, const ui_manager_ctx_t *ctx)
 {
-    if (disp == NULL || status_ref == NULL)
+    if (disp == NULL || status_ref == NULL || ctx == NULL)
     {
-        ESP_LOGE(TAG, "Invalid parameters: disp=%p status_ref=%p", (void *)disp, (const void *)status_ref);
+        ESP_LOGE(TAG, "Invalid parameters: disp=%p status_ref=%p ctx=%p", (void *)disp, (const void *)status_ref, (const void *)ctx);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -165,6 +189,7 @@ esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref)
     }
 
     s_status_ref = status_ref;
+    s_ctx = ctx;
     ui_theme_init(&s_theme);
 
     s_screen = lv_obj_create(NULL);
@@ -202,16 +227,20 @@ esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref)
     lv_obj_set_grid_dsc_array(s_panel_container, s_panel_col_dsc, s_panel_row_dsc);
 
     s_panels[0].name = "dashboard";
-    s_panels[0].root = dashboard_panel_create(s_panel_container, &s_theme, s_status_ref);
-    s_panels[0].update_fn = dashboard_panel_update;
+    s_panels[0].root = dashboard_panel_create(s_panel_container, &s_theme, s_status_ref, s_ctx->reptiles, s_ctx->wifi_state, s_ctx->storage_mount);
+    s_panels[0].update_fn = update_dashboard_panel;
 
-    s_panels[1].name = "peripherals";
-    s_panels[1].root = peripherals_panel_create(s_panel_container, &s_theme, s_status_ref);
-    s_panels[1].update_fn = peripherals_panel_update;
+    s_panels[1].name = "reptiles";
+    s_panels[1].root = reptiles_panel_create(s_panel_container, &s_theme, s_ctx->reptiles, s_ctx->save_data_cb);
+    s_panels[1].update_fn = update_reptiles_panel;
 
-    s_panels[2].name = "settings";
-    s_panels[2].root = settings_panel_create(s_panel_container, &s_theme, s_status_ref);
-    s_panels[2].update_fn = settings_panel_update;
+    s_panels[2].name = "logs";
+    s_panels[2].root = logs_panel_view_create(s_panel_container, &s_theme, s_ctx->reptiles);
+    s_panels[2].update_fn = update_logs_panel;
+
+    s_panels[3].name = "settings";
+    s_panels[3].root = settings_panel_create(s_panel_container, &s_theme, s_status_ref, s_ctx->wifi_connect_cb, s_ctx->wifi_creds);
+    s_panels[3].update_fn = update_settings_panel;
 
     bool all_panels_ready = true;
 
@@ -264,7 +293,7 @@ void ui_manager_set_mode(ui_mode_t mode)
 
 void ui_manager_tick_1s(void)
 {
-    if (!s_status_ref)
+    if (!s_status_ref || !s_ctx)
     {
         return;
     }
@@ -273,7 +302,7 @@ void ui_manager_tick_1s(void)
     {
         if (s_panels[i].update_fn)
         {
-            s_panels[i].update_fn(s_status_ref);
+            s_panels[i].update_fn(s_status_ref, s_ctx);
         }
     }
 
