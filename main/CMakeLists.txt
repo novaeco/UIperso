@@ -9,4 +9,4 @@ idf_component_register(SRCS "main.c"
                             "ui_manager.c"
                             ${UI_SOURCES}
                        INCLUDE_DIRS "." "ui" "ui/panels"
-                       REQUIRES bus ch422g display gt911 lvgl power sdspi_ch422g storage system_status)
+                       REQUIRES bus ch422g display gt911 lvgl power sdspi_ch422g storage system_status reptile_core reptile_net)
