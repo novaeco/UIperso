@@ -1,19 +1,8 @@
-file(GLOB UI_SOURCES
-     "ui/*.c"
-     "ui/panels/*.c")
+file(GLOB MAIN_SRCS "*.c")
 
 idf_component_register(
-    SRCS
-        "main.c"
-        "logs_panel.c"
-        "lvgl_runtime.c"
-        "ui_smoke.c"
-        "ui_manager.c"
-        ${UI_SOURCES}
-    INCLUDE_DIRS
-        "."
-        "ui"
-        "ui/panels"
+    SRCS ${MAIN_SRCS}
+    INCLUDE_DIRS "."
     REQUIRES
         bus
         ch422g
