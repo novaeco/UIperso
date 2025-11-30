@@ -18,7 +18,7 @@
 
 #define LCD_H_RES                  1024
 #define LCD_V_RES                  600
-#define LCD_PIXEL_CLOCK_HZ         51438720  /* 1024x600 @60 Hz with existing porch timings (1344*638*60) */
+#define LCD_PIXEL_CLOCK_HZ         16000000  /* ST7262-safe range (8–20 MHz) for stable 1024x600 timing */
 
 #define LCD_HSYNC_PULSE_WIDTH      20
 #define LCD_HSYNC_BACK_PORCH       160
@@ -78,6 +78,13 @@ static int64_t s_last_flush_log_us = 0;
 
 static void rgb_lcd_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
+    if (s_panel_handle == NULL)
+    {
+        ESP_LOGE(TAG, "flush skipped: panel handle is NULL");
+        lv_display_flush_ready(disp);
+        return;
+    }
+
     const int32_t x1 = area->x1;
     const int32_t y1 = area->y1;
     const int32_t x2 = area->x2 + 1;
@@ -233,6 +240,10 @@ void rgb_lcd_init(void)
         },
     };
 
+    ESP_LOGI(TAG, "RGB timing: pclk=%lu Hz hsync pw/back/front=%u/%u/%u vsync pw/back/front=%u/%u/%u", (unsigned long)timing.pclk_hz,
+             timing.hsync_pulse_width, timing.hsync_back_porch, timing.hsync_front_porch,
+             timing.vsync_pulse_width, timing.vsync_back_porch, timing.vsync_front_porch);
+
     esp_err_t err = esp_lcd_new_rgb_panel(&panel_config, &s_panel_handle);
     if (err != ESP_OK)
     {
@@ -284,6 +295,8 @@ void rgb_lcd_init(void)
     lv_display_set_buffers(s_disp, s_buf1, s_buf2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(s_disp, rgb_lcd_flush);
     lv_display_set_default(s_disp);
+
+    rgb_lcd_draw_test_pattern();
 
     const int64_t elapsed_ms = (esp_timer_get_time() - t_start) / 1000;
     ESP_LOGI(TAG, "RGB panel initialized (%dx%d) in %lld ms", LCD_H_RES, LCD_V_RES, (long long)elapsed_ms);

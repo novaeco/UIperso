@@ -34,6 +34,7 @@ static uint8_t s_active_index = 0;
 static ui_mode_t s_mode = UI_MODE_NORMAL;
 static lv_obj_t *s_mode_label = NULL;
 static lv_obj_t *s_heartbeat_label = NULL;
+static lv_obj_t *s_ready_label = NULL;
 static lv_timer_t *s_rotate_timer = NULL;
 
 static void set_active_panel(uint8_t index)
@@ -147,6 +148,12 @@ esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref)
     lv_obj_set_flex_flow(s_screen, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_screen, 10, LV_PART_MAIN);
 
+    s_ready_label = lv_label_create(s_screen);
+    lv_obj_add_style(s_ready_label, &s_theme.title, LV_PART_MAIN);
+    lv_obj_set_width(s_ready_label, lv_pct(100));
+    lv_obj_set_style_text_align(s_ready_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_text(s_ready_label, "UI READY");
+
     lv_obj_t *header = lv_obj_create(s_screen);
     lv_obj_remove_style_all(header);
     lv_obj_set_width(header, lv_pct(100));
@@ -197,6 +204,7 @@ esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref)
     set_active_panel(0);
     update_mode_indicator();
     lv_scr_load(s_screen);
+    lv_obj_invalidate(lv_scr_act());
 
     s_rotate_timer = lv_timer_create(rotation_timer_cb, ROTATION_PERIOD_MS, NULL);
     return ESP_OK;
@@ -228,6 +236,12 @@ void ui_manager_tick_1s(void)
         const uint32_t flush = rgb_lcd_flush_count_get();
         const uint32_t uptime = (uint32_t)(esp_timer_get_time() / 1000000ULL);
         lv_label_set_text_fmt(s_heartbeat_label, "uptime %" PRIu32 "s | flush %" PRIu32, uptime, flush);
+    }
+
+    if (s_ready_label)
+    {
+        const uint32_t uptime = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+        lv_label_set_text_fmt(s_ready_label, "UI READY | uptime %" PRIu32 " s", uptime);
     }
 }
 
