@@ -64,7 +64,7 @@ static void lvgl_task(void *arg)
             const size_t heap_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
             const size_t heap_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
 
-            ESP_LOGI(TAG, "LVGL_RUN: handler loop alive tick_alive=%" PRIu32 " (+%" PRIu32 "/s) handler_calls=%" PRIu32 " flush/s=%" PRIu32 " heap_i=%u heap_psram=%u",
+            ESP_LOGI(TAG, "LVGL OK: tick_alive=%" PRIu32 " (+%" PRIu32 "/s) handler_calls=%" PRIu32 " flush/s=%" PRIu32 " heap_i=%u heap_psram=%u",
                      ticks, tick_delta, atomic_load_explicit(&s_handler_count, memory_order_relaxed), flush_delta, (unsigned)heap_internal, (unsigned)heap_psram);
 
             ui_manager_tick_1s();

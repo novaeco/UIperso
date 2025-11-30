@@ -654,7 +654,7 @@ static void app_init_task(void *arg)
         }
         ESP_LOGI(TAG, "MAIN: ui init done");
         ESP_LOGI(TAG, "MAIN: active screen=%p", (void *)lv_scr_act());
-        lv_obj_invalidate(lv_screen_active());
+        lv_obj_invalidate(lv_scr_act());
     }
 
     ESP_LOGI(TAG_INIT, "Phase 1 done: display=%s, touch=%s, sdcard=%s",
