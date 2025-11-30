@@ -21,6 +21,9 @@ Ce document décrit la base logicielle créée pour transformer UIperso en un as
 - Les points de montage restent paramétrables (ex. `/sdcard`) ; en absence de stockage ou de réseau, les fonctions retournent un `esp_err_t` explicite sans bloquer l'UI.
 
 ## Prochaines étapes
+- Gestionnaire UI relié au métier : dashboard, liste des reptiles et écran Documents/Logs consomment `reptiles_data_t` et déclenchent les sauvegardes JSON via une file FreeRTOS.
+- Paramétrage Wi‑Fi côté UI : textareas LVGL pour SSID/mot de passe, enregistrement NVS (`reptile_net_prefs_*`) et connexion STA+NTP pilotée par la file d'arrière-plan.
+- Persistance et réseau découplés : `persistence_task` traite les écritures JSON/audit et les connexions Wi‑Fi/NTP hors du thread LVGL pour préserver la réactivité tactile.
 - Brancher le gestionnaire UI (`ui_manager`) sur `reptile_core` pour afficher/éditer les reptiles et déclencher les sauvegardes JSON après chaque action.
 - Ajouter un panneau Paramètres exploitant `reptile_net_prefs_*` et `reptile_net_wifi_start()` avec clavier virtuel LVGL pour saisir les identifiants.
 - Créer des tâches dédiées pour NTP et pour la persistance périodique afin d'éviter toute charge sur la tâche LVGL, conformément aux règles RTOS du projet.

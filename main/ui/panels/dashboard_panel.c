@@ -1,16 +1,18 @@
 #include "dashboard_panel.h"
 
 #include <inttypes.h>
+#include <stdio.h>
 #include <stdarg.h>
 
 static const ui_theme_styles_t *s_theme = NULL;
 static const system_status_t *s_status = NULL;
-static lv_obj_t *s_card_summary = NULL;
-static lv_obj_t *s_can_label = NULL;
-static lv_obj_t *s_rs485_label = NULL;
-static lv_obj_t *s_power_label = NULL;
+static const reptiles_data_t *s_reptiles = NULL;
+static const char *s_storage_mount = NULL;
+
+static lv_obj_t *s_summary = NULL;
+static lv_obj_t *s_wifi_label = NULL;
 static lv_obj_t *s_sd_label = NULL;
-static lv_obj_t *s_touch_label = NULL;
+static lv_obj_t *s_count_label = NULL;
 
 static lv_obj_t *create_card(lv_obj_t *parent, const char *title)
 {
@@ -20,7 +22,7 @@ static lv_obj_t *create_card(lv_obj_t *parent, const char *title)
     lv_obj_set_width(card, lv_pct(100));
     lv_obj_set_layout(card, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(card, 8, LV_PART_MAIN);
 
     if (title)
     {
@@ -31,86 +33,72 @@ static lv_obj_t *create_card(lv_obj_t *parent, const char *title)
     return card;
 }
 
-static void set_label_text(lv_obj_t *label, const char *fmt, ...)
+static void set_label(lv_obj_t *label, const char *fmt, ...)
 {
     if (!label || !fmt)
     {
         return;
     }
-
     va_list args;
     va_start(args, fmt);
     lv_label_set_text_vfmt(label, fmt, args);
     va_end(args);
 }
 
-lv_obj_t *dashboard_panel_create(lv_obj_t *parent, const ui_theme_styles_t *theme, const system_status_t *status_ref)
+lv_obj_t *dashboard_panel_create(lv_obj_t *parent,
+                                 const ui_theme_styles_t *theme,
+                                 const system_status_t *status_ref,
+                                 const reptiles_data_t *reptiles,
+                                 const reptile_wifi_state_t *wifi_state,
+                                 const char *storage_mount)
 {
     s_theme = theme;
     s_status = status_ref;
+    s_reptiles = reptiles;
+    s_storage_mount = storage_mount;
 
     lv_obj_t *panel = lv_obj_create(parent);
     lv_obj_remove_style_all(panel);
     lv_obj_add_style(panel, &s_theme->bg, LV_PART_MAIN);
     lv_obj_set_layout(panel, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(panel, 12, LV_PART_MAIN);
 
     lv_obj_t *header = lv_label_create(panel);
     lv_obj_add_style(header, &s_theme->title, LV_PART_MAIN);
     lv_label_set_text(header, "Tableau de bord");
 
-    s_card_summary = create_card(panel, "Résumé");
+    s_summary = create_card(panel, "Synthèse");
+    s_count_label = lv_label_create(s_summary);
+    lv_obj_add_style(s_count_label, &s_theme->value, LV_PART_MAIN);
 
-    s_can_label = lv_label_create(s_card_summary);
-    lv_obj_add_style(s_can_label, &s_theme->value, LV_PART_MAIN);
+    s_wifi_label = lv_label_create(s_summary);
+    lv_obj_add_style(s_wifi_label, &s_theme->value, LV_PART_MAIN);
 
-    s_rs485_label = lv_label_create(s_card_summary);
-    lv_obj_add_style(s_rs485_label, &s_theme->value, LV_PART_MAIN);
-
-    s_power_label = lv_label_create(s_card_summary);
-    lv_obj_add_style(s_power_label, &s_theme->value, LV_PART_MAIN);
-
-    s_sd_label = lv_label_create(s_card_summary);
+    s_sd_label = lv_label_create(s_summary);
     lv_obj_add_style(s_sd_label, &s_theme->value, LV_PART_MAIN);
 
-    s_touch_label = lv_label_create(s_card_summary);
-    lv_obj_add_style(s_touch_label, &s_theme->value, LV_PART_MAIN);
-
-    dashboard_panel_update(status_ref);
+    dashboard_panel_update(status_ref, reptiles, wifi_state);
     return panel;
 }
 
-void dashboard_panel_update(const system_status_t *status_ref)
+void dashboard_panel_update(const system_status_t *status_ref, const reptiles_data_t *reptiles, const reptile_wifi_state_t *wifi_state)
 {
-    const system_status_t *status = status_ref ? status_ref : s_status;
-    if (!status)
+    if (status_ref)
     {
-        return;
+        s_status = status_ref;
     }
+    if (reptiles)
+    {
+        s_reptiles = reptiles;
+    }
+    const int count = s_reptiles ? s_reptiles->reptile_count : 0;
+    set_label(s_count_label, "Reptiles gérés: %d", count);
 
-    set_label_text(s_can_label, "CAN : %s (%" PRIu32 " trames)", status->can_ok ? "OK" : "KO", status->can_frames_rx);
-    set_label_text(s_rs485_label,
-                   "RS485 : %s (tx=%" PRIu32 "B rx=%" PRIu32 "B)",
-                   status->rs485_ok ? "OK" : "KO",
-                   status->rs485_tx_count,
-                   status->rs485_rx_count);
+    const bool wifi_ok = s_status ? s_status->wifi_connected : false;
+    const char *ssid = (s_status && s_status->wifi_connected) ? s_status->wifi_ssid : "non configuré";
+    set_label(s_wifi_label, "Wi-Fi: %s (%s)", wifi_ok ? "connecté" : "hors ligne", ssid);
 
-    if (status->power_ok && status->power_telemetry_available)
-    {
-        set_label_text(s_power_label, "Alim : %.2f V (%s)", status->vbat, status->charging ? "charge" : "repos");
-    }
-    else if (!status->power_ok)
-    {
-        set_label_text(s_power_label, "Alim : désactivée");
-    }
-    else
-    {
-        set_label_text(s_power_label, "Alim : télémetrie inconnue");
-    }
-
-    set_label_text(s_sd_label, "microSD : %s", status->sd_mounted ? "montée" : "absente");
-    set_label_text(s_touch_label, "Tactile : %s", status->touch_available ? "ON" : "OFF");
+    const bool sd_ok = s_status ? s_status->sd_mounted : false;
+    set_label(s_sd_label, "Stockage (%s): %s", s_storage_mount ? s_storage_mount : "?", sd_ok ? "ok" : "absent");
 }
-

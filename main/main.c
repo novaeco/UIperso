@@ -1,12 +1,13 @@
 #include <inttypes.h>
-#include <math.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "sdkconfig.h"
 #include "project_config_compat.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_chip_info.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -24,14 +25,13 @@
 #include "sdcard.h"
 #endif
 
-#include "can_driver.h"
-#include "cs8501.h"
-#include "rs485_driver.h"
 #include "ui_manager.h"
 #include "logs_panel.h"
 #include "system_status.h"
 #include "ui_smoke.h"
 #include "lvgl_runtime.h"
+#include "reptile_core.h"
+#include "reptile_net.h"
 
 /*
  * Touch reboot loop post-mortem:
@@ -57,17 +57,39 @@ static void update_ui_mode_from_status(void);
 static void exio4_toggle_selftest(void);
 static void log_storage_state(bool storage_available);
 static void publish_hw_status(bool i2c_ok, bool ch422g_ok, bool gt911_ok, bool touch_available);
-#if CONFIG_ENABLE_CAN
-static void can_rx_task(void *arg);
-#endif
 static void log_active_screen_state(const char *stage);
+static void persistence_task(void *arg);
+static void request_save_data(const char *audit);
+static void request_audit(const char *audit);
+static void request_wifi_connect(const reptile_wifi_credentials_t *creds);
 
 typedef struct
 {
     lv_display_t *disp;
     const system_status_t *status_ref;
+    const ui_manager_ctx_t *ctx;
     esp_err_t result;
 } ui_init_ctx_t;
+
+typedef enum
+{
+    APP_REQ_SAVE_DATA,
+    APP_REQ_APPEND_AUDIT,
+    APP_REQ_WIFI_CONNECT,
+} app_request_type_t;
+
+typedef struct
+{
+    app_request_type_t type;
+    char audit_msg[96];
+    reptile_wifi_credentials_t wifi_creds;
+} app_request_t;
+
+static reptiles_data_t s_reptiles = {0};
+static reptile_wifi_state_t s_wifi_state = {0};
+static reptile_wifi_credentials_t s_wifi_creds = {0};
+static const char *s_storage_mount = "/sdcard";
+static QueueHandle_t s_app_queue = NULL;
 
 #define INIT_YIELD()            \
     do {                        \
@@ -95,6 +117,56 @@ static void log_active_screen_state(const char *stage)
     ESP_LOGI(TAG, "%s: default_disp=%p screen=%p children=%u", stage, (void *)disp, (void *)screen, (unsigned)children);
 }
 
+static void enqueue_request(const app_request_t *req)
+{
+    if (req == NULL || s_app_queue == NULL)
+    {
+        return;
+    }
+
+    if (xQueueSend(s_app_queue, req, pdMS_TO_TICKS(10)) != pdPASS)
+    {
+        ESP_LOGW(TAG, "App queue full; dropping request type=%d", (int)req->type);
+    }
+}
+
+static void request_save_data(const char *audit)
+{
+    app_request_t req = {
+        .type = APP_REQ_SAVE_DATA,
+    };
+    if (audit)
+    {
+        strlcpy(req.audit_msg, audit, sizeof(req.audit_msg));
+    }
+    enqueue_request(&req);
+}
+
+static void request_audit(const char *audit)
+{
+    app_request_t req = {
+        .type = APP_REQ_APPEND_AUDIT,
+    };
+    if (audit)
+    {
+        strlcpy(req.audit_msg, audit, sizeof(req.audit_msg));
+    }
+    enqueue_request(&req);
+}
+
+static void request_wifi_connect(const reptile_wifi_credentials_t *creds)
+{
+    if (creds == NULL)
+    {
+        return;
+    }
+    app_request_t req = {
+        .type = APP_REQ_WIFI_CONNECT,
+    };
+    memcpy(&req.wifi_creds, creds, sizeof(req.wifi_creds));
+    enqueue_request(&req);
+}
+
 static void lvgl_create_smoke_cb(void *arg)
 {
     lv_display_t *disp = (lv_display_t *)arg;
@@ -113,7 +185,7 @@ static void lvgl_load_fallback_cb(void *arg)
 static void lvgl_ui_manager_init_cb(void *arg)
 {
     ui_init_ctx_t *ctx = (ui_init_ctx_t *)arg;
-    ctx->result = ui_manager_init(ctx->disp, ctx->status_ref);
+    ctx->result = ui_manager_init(ctx->disp, ctx->status_ref, ctx->ctx);
     log_active_screen_state("UI_MANAGER_INIT");
 }
 
@@ -142,15 +214,12 @@ static void log_build_info(void)
 
 static void log_option_state(void)
 {
-    ESP_LOGI(TAG_INIT, "Options: display=%d, touch=%d, sdcard=%d, i2c_scan=%d, ui_smoke=%d, can=%d, rs485=%d, power=%d",
+    ESP_LOGI(TAG_INIT, "Options: display=%d, touch=%d, sdcard=%d, i2c_scan=%d, ui_smoke=%d",
              CONFIG_ENABLE_DISPLAY,
              CONFIG_ENABLE_TOUCH,
              CONFIG_ENABLE_SDCARD,
              CONFIG_I2C_SCAN_AT_BOOT,
-             CONFIG_UI_SMOKE_MODE,
-             CONFIG_ENABLE_CAN,
-             CONFIG_ENABLE_RS485,
-             CONFIG_ENABLE_POWER);
+             CONFIG_UI_SMOKE_MODE);
 }
 
 // Reset loop root-cause (panic reason=4) was LVGL tick double-counting when CONFIG_LV_TICK_CUSTOM=1
@@ -254,9 +323,6 @@ static void i2c_scan_bus(i2c_master_bus_handle_t bus)
     }
 }
 
-#if CONFIG_ENABLE_CAN
-static TaskHandle_t s_can_rx_task_handle = NULL;
-#endif
 
 static void log_storage_state(bool storage_available)
 {
@@ -322,47 +388,63 @@ static void log_heap_metrics(const char *stage)
                        (unsigned int)psram_min);
 }
 
-#if CONFIG_ENABLE_CAN
-static void can_rx_task(void *arg)
+static void persistence_task(void *arg)
 {
     (void)arg;
-    twai_message_t rx_msg = {0};
-    TickType_t last_error_log = 0;
-
-    ESP_LOGI(TAG, "CAN RX task started (low priority)");
+    ESP_LOGI(TAG, "Persistence task running (queue depth=%d)", (int)uxQueueSpacesAvailable(s_app_queue));
 
     for (;;)
     {
-        const esp_err_t err = can_bus_receive_frame(&rx_msg, pdMS_TO_TICKS(10));
-        if (err == ESP_OK)
+        app_request_t req = {0};
+        if (xQueueReceive(s_app_queue, &req, portMAX_DELAY) != pdTRUE)
         {
-            system_status_increment_can_frames();
+            continue;
         }
-        else if (err == ESP_ERR_TIMEOUT)
+
+        switch (req.type)
         {
-            // No frame received; keep looping without spamming logs.
-        }
-        else if (err == ESP_ERR_INVALID_STATE)
-        {
-            if ((xTaskGetTickCount() - last_error_log) > pdMS_TO_TICKS(1000))
+        case APP_REQ_SAVE_DATA:
+            ESP_LOGI(TAG, "Saving reptile dataset (%d entries)", s_reptiles.reptile_count);
+            (void)reptile_core_save(&s_reptiles, s_storage_mount);
+            if (req.audit_msg[0] != '\0')
             {
-                ESP_LOGW(TAG, "CAN RX task: TWAI driver not started");
-                last_error_log = xTaskGetTickCount();
+                (void)reptile_core_audit_append(s_storage_mount, req.audit_msg);
             }
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-        else
-        {
-            if ((xTaskGetTickCount() - last_error_log) > pdMS_TO_TICKS(1000))
+            break;
+        case APP_REQ_APPEND_AUDIT:
+            if (req.audit_msg[0] != '\0')
             {
-                ESP_LOGW(TAG, "CAN RX task receive error: %s", esp_err_to_name(err));
-                last_error_log = xTaskGetTickCount();
+                (void)reptile_core_audit_append(s_storage_mount, req.audit_msg);
             }
-            vTaskDelay(pdMS_TO_TICKS(10));
+            break;
+        case APP_REQ_WIFI_CONNECT:
+        {
+            ESP_LOGI(TAG, "Wi-Fi connect request for SSID='%s'", req.wifi_creds.ssid);
+            (void)reptile_net_prefs_save_wifi(&req.wifi_creds);
+            esp_err_t wifi_err = reptile_net_wifi_start(&req.wifi_creds, &s_wifi_state);
+            system_status_set_wifi(wifi_err == ESP_OK, wifi_err == ESP_OK ? (const char *)req.wifi_creds.ssid : "");
+            if (wifi_err == ESP_OK)
+            {
+                reptile_ntp_config_t ntp_cfg = {
+                    .server = "pool.ntp.org",
+                    .tz = "CET-1CEST,M3.5.0,M10.5.0/3",
+                };
+                (void)reptile_net_ntp_start(&ntp_cfg);
+                (void)reptile_core_audit_append(s_storage_mount, "Wi-Fi connecté, NTP lancé");
+            }
+            else
+            {
+                ESP_LOGW(TAG, "Wi-Fi connect failed: %s", esp_err_to_name(wifi_err));
+                (void)reptile_core_audit_append(s_storage_mount, "Wi-Fi: échec de connexion");
+            }
+            break;
+        }
+        default:
+            ESP_LOGW(TAG, "Unknown request type=%d", req.type);
+            break;
         }
     }
 }
-#endif
 
 void app_main(void)
 {
@@ -613,91 +695,49 @@ static void app_init_task(void *arg)
     logs_panel_add_log("État bus: I2C=%d CH422G=%d GT911=%d", i2c_ok, ch422g_ok, gt911_ok);
     ESP_LOGI(TAG, "After GT911 init, proceeding with peripherals");
 
-    // Avoid monopolizing CPU0 around synchronous peripheral inits.
-    INIT_YIELD();
+    system_status_set_wifi(false, "");
 
-    ESP_LOGI(TAG, "Init peripherals step 2: can_bus_init()");
-#if CONFIG_ENABLE_CAN
-    esp_err_t can_err = can_bus_init();
-    if (can_err != ESP_OK)
+    if (s_app_queue == NULL)
     {
-        ESP_LOGE(TAG,
-                 "CAN init failed: %s (CAN désactivé, on continue sans CAN)",
-                 esp_err_to_name(can_err));
-        logs_panel_add_log("CAN: init échouée (%s), CAN désactivé", esp_err_to_name(can_err));
-        degraded_mode = true;
-        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
-        system_status_set_can_ok(false);
-    }
-    else
-    {
-        system_status_set_can_ok(true);
-        ESP_LOGI(TAG, "CAN init OK, bus actif");
-        if (s_can_rx_task_handle == NULL)
+        s_app_queue = xQueueCreate(8, sizeof(app_request_t));
+        if (s_app_queue)
         {
-            BaseType_t can_task_ok = xTaskCreatePinnedToCore(
-                can_rx_task,
-                "can_rx",
-                4096,
-                NULL,
-                2,
-                &s_can_rx_task_handle,
-                0);
-            if (can_task_ok != pdPASS)
-            {
-                ESP_LOGE(TAG, "Failed to create CAN RX task");
-                system_status_set_can_ok(false);
-            }
+            (void)xTaskCreatePinnedToCore(persistence_task, "persist", 4096, NULL, 4, NULL, 1);
         }
     }
-#else
-    ESP_LOGI(TAG, "CAN disabled (CONFIG_ENABLE_CAN=0); skipping can_bus_init()");
-    system_status_set_can_ok(false);
-#endif
-    INIT_YIELD();
 
-    ESP_LOGI(TAG, "Init peripherals step 3: rs485_init()");
-#if CONFIG_ENABLE_RS485
-    esp_err_t rs485_err = rs485_init();
-    if (rs485_err != ESP_OK)
-    {
-        log_non_fatal_error("RS485 init", rs485_err);
-        degraded_mode = true;
-        ui_manager_set_mode(UI_MODE_DEGRADED_TOUCH);
-        system_status_set_rs485_ok(false);
-    }
-    else
-    {
-        system_status_set_rs485_ok(true);
-        ESP_LOGI(TAG, "RS485 init OK");
-    }
-#else
-    ESP_LOGI(TAG, "RS485 disabled (CONFIG_ENABLE_RS485=0); skipping rs485_init()");
-    system_status_set_rs485_ok(false);
-#endif
-    INIT_YIELD();
+    ESP_LOGI(TAG, "Init data model + prefs");
+    reptile_net_prefs_init();
 
-    ESP_LOGI(TAG, "Init peripherals step 4: cs8501_init()");
-#if CONFIG_ENABLE_POWER
-    cs8501_init();
-    float vbat = cs8501_get_battery_voltage();
-    const bool vbat_ok = cs8501_has_voltage_reading() && !isnan(vbat);
-    const bool charging_known = cs8501_has_charge_status();
-    const bool charging = charging_known ? cs8501_is_charging() : false;
-    system_status_set_power(true, vbat_ok, vbat_ok ? vbat : NAN, charging_known, charging);
-    ESP_LOGI(TAG, "Battery voltage: %.2f V, charging: %s", vbat, charging ? "yes" : "no");
-#else
-    ESP_LOGW(TAG, "CS8501 disabled (CONFIG_ENABLE_POWER=0); skipping power telemetry");
-    system_status_set_power(false, false, NAN, false, false);
-#endif
-    INIT_YIELD();
+    esp_err_t core_err = reptile_core_init(&s_reptiles, s_storage_mount);
+    if (core_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Reptile core init failed (%s), dataset empty", esp_err_to_name(core_err));
+    }
+
+    if (reptile_net_prefs_load_wifi(&s_wifi_creds) == ESP_OK)
+    {
+        ESP_LOGI(TAG, "Wi-Fi creds loaded for SSID '%s'", s_wifi_creds.ssid);
+        request_wifi_connect(&s_wifi_creds);
+    }
 
     ESP_LOGI(TAG, "Init peripherals step 6: ui_manager_init()");
     ESP_LOGI(TAG, "UI: entrypoint called: ui_manager_init");
     int64_t t_ui = stage_begin("ui_manager_init");
+    ui_manager_ctx_t manager_ctx = {
+        .storage_mount = s_storage_mount,
+        .reptiles = &s_reptiles,
+        .wifi_state = &s_wifi_state,
+        .wifi_creds = &s_wifi_creds,
+        .save_data_cb = request_save_data,
+        .audit_cb = request_audit,
+        .wifi_connect_cb = request_wifi_connect,
+    };
+
     ui_init_ctx_t ui_ctx = {
         .disp = disp,
         .status_ref = system_status_get_ref(),
+        .ctx = &manager_ctx,
         .result = ESP_FAIL,
     };
 
