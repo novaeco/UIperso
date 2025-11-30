@@ -17,6 +17,20 @@ static uint32_t s_counter = 0;
 static lv_obj_t *s_diag_screen = NULL;
 static lv_obj_t *s_fallback_screen = NULL;
 
+static void log_state(const char *stage)
+{
+    lv_display_t *default_disp = lv_display_get_default();
+    lv_obj_t *screen = lv_screen_active();
+    const uint32_t children = screen ? lv_obj_get_child_cnt(screen) : 0;
+
+    ESP_LOGI(TAG_SMOKE,
+             "%s: default_disp=%p active_screen=%p children=%" PRIu32,
+             stage,
+             (void *)default_disp,
+             (void *)screen,
+             children);
+}
+
 static void ui_smoke_timer_cb(lv_timer_t *timer)
 {
     LV_UNUSED(timer);
@@ -33,6 +47,8 @@ static void ui_smoke_timer_cb(lv_timer_t *timer)
     {
         lv_label_set_text_fmt(s_flush_label, "flush=%" PRIu32, flush);
     }
+
+    ESP_LOGI(TAG_SMOKE, "ui_tick t=%" PRIu32 "s screen=%p", s_counter, (void *)lv_screen_active());
 }
 
 void ui_smoke_init(lv_display_t *disp)
@@ -48,6 +64,14 @@ void ui_smoke_init(lv_display_t *disp)
         ESP_LOGW(TAG_SMOKE, "Smoke UI skipped: no display");
         return;
     }
+
+    if (lv_display_get_default() == NULL)
+    {
+        lv_display_set_default(disp);
+        ESP_LOGW(TAG_SMOKE, "Default display was NULL, forcing default=%p", (void *)disp);
+    }
+
+    log_state("SMOKE_BEGIN");
 
     s_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_screen, lv_color_hex(0x2A2A2A), LV_PART_MAIN);
@@ -77,6 +101,7 @@ void ui_smoke_init(lv_display_t *disp)
     }
 
     ESP_LOGI(TAG_SMOKE, "SMOKE UI ready (children=%u)", (unsigned)lv_obj_get_child_cnt(s_screen));
+    log_state("SMOKE_READY");
 }
 
 void ui_smoke_boot_screen(void)

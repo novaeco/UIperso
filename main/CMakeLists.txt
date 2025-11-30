@@ -1,11 +1,12 @@
+file(GLOB UI_SOURCES
+     "ui/*.c"
+     "ui/panels/*.c")
+
 idf_component_register(SRCS "main.c"
                             "logs_panel.c"
                             "lvgl_runtime.c"
                             "ui_smoke.c"
                             "ui_manager.c"
-                            "ui/theme.c"
-                            "ui/panels/dashboard_panel.c"
-                            "ui/panels/peripherals_panel.c"
-                            "ui/panels/settings_panel.c"
+                            ${UI_SOURCES}
                        INCLUDE_DIRS "." "ui" "ui/panels"
                        REQUIRES bus ch422g display gt911 lvgl power sdspi_ch422g storage system_status)
