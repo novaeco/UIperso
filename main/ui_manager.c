@@ -36,6 +36,8 @@ static lv_obj_t *s_mode_label = NULL;
 static lv_obj_t *s_heartbeat_label = NULL;
 static lv_obj_t *s_ready_label = NULL;
 static lv_timer_t *s_rotate_timer = NULL;
+static const lv_coord_t s_panel_col_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+static const lv_coord_t s_panel_row_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
 
 static void set_active_panel(uint8_t index)
 {
@@ -66,6 +68,24 @@ static void nav_event_cb(lv_event_t *e)
 {
     uint32_t idx = (uint32_t)lv_event_get_user_data(e);
     set_active_panel((uint8_t)idx);
+}
+
+static bool grid_template_valid(const lv_coord_t *dsc)
+{
+    if (!dsc)
+    {
+        return false;
+    }
+
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        if (dsc[i] == LV_GRID_TEMPLATE_LAST)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static void update_mode_indicator(void)
@@ -132,6 +152,12 @@ esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref)
         return ESP_ERR_INVALID_ARG;
     }
 
+    if (!grid_template_valid(s_panel_col_dsc) || !grid_template_valid(s_panel_row_dsc))
+    {
+        ESP_LOGE(TAG, "Grid descriptors invalid (col_dsc=%p row_dsc=%p)", (void *)s_panel_col_dsc, (void *)s_panel_row_dsc);
+        return ESP_ERR_INVALID_STATE;
+    }
+
     if (lv_disp_get_default() == NULL)
     {
         ESP_LOGE(TAG, "Default display not set before ui_manager_init");
@@ -173,9 +199,7 @@ esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref)
     lv_obj_set_width(s_panel_container, lv_pct(100));
     lv_obj_set_flex_grow(s_panel_container, 1);
     lv_obj_set_layout(s_panel_container, LV_LAYOUT_GRID);
-    lv_coord_t col_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-    lv_coord_t row_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-    lv_obj_set_grid_dsc_array(s_panel_container, col_dsc, row_dsc);
+    lv_obj_set_grid_dsc_array(s_panel_container, s_panel_col_dsc, s_panel_row_dsc);
 
     s_panels[0].name = "dashboard";
     s_panels[0].root = dashboard_panel_create(s_panel_container, &s_theme, s_status_ref);
@@ -189,11 +213,18 @@ esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref)
     s_panels[2].root = settings_panel_create(s_panel_container, &s_theme, s_status_ref);
     s_panels[2].update_fn = settings_panel_update;
 
+    bool all_panels_ready = true;
+
     for (uint8_t i = 0; i < PANEL_COUNT; i++)
     {
         if (s_panels[i].root)
         {
             lv_obj_set_grid_cell(s_panels[i].root, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 0, 1);
+        }
+        else
+        {
+            ESP_LOGE(TAG, "Panel '%s' failed to create", s_panels[i].name ? s_panels[i].name : "(unnamed)");
+            all_panels_ready = false;
         }
     }
 
@@ -201,12 +232,27 @@ esp_err_t ui_manager_init(lv_display_t *disp, const system_status_t *status_ref)
     s_heartbeat_label = lv_label_create(s_screen);
     lv_obj_add_style(s_heartbeat_label, &s_theme.subtle, LV_PART_MAIN);
 
+    if (!all_panels_ready)
+    {
+        lv_obj_t *fallback = lv_obj_create(NULL);
+        lv_obj_remove_style_all(fallback);
+        lv_obj_set_style_bg_color(fallback, lv_color_hex(0x5C0010), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(fallback, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_t *label = lv_label_create(fallback);
+        lv_label_set_text(label, "UI indisponible (panel manquant)");
+        lv_obj_center(label);
+        lv_scr_load(fallback);
+        ESP_LOGE(TAG, "UI manager fallback loaded due to missing panels");
+        return ESP_FAIL;
+    }
+
     set_active_panel(0);
     update_mode_indicator();
     lv_scr_load(s_screen);
     lv_obj_invalidate(lv_scr_act());
 
     s_rotate_timer = lv_timer_create(rotation_timer_cb, ROTATION_PERIOD_MS, NULL);
+    ESP_LOGI(TAG, "UI canonical init done (panels=%d)", PANEL_COUNT);
     return ESP_OK;
 }
 

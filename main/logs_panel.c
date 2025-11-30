@@ -5,14 +5,43 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "lv_theme_custom.h"
-
 #define LOG_PANEL_BUFFER_SIZE 4096
 #define LOG_LINE_MAX 256
 
 static lv_obj_t *log_text_area = NULL;
 static char log_buffer[LOG_PANEL_BUFFER_SIZE];
 static bool log_buffer_initialized = false;
+static bool styles_initialized = false;
+static lv_style_t style_screen;
+static lv_style_t style_title;
+static lv_style_t style_card;
+
+static void ensure_styles_initialized(void)
+{
+    if (styles_initialized)
+    {
+        return;
+    }
+
+    lv_style_init(&style_screen);
+    lv_style_set_bg_color(&style_screen, lv_color_hex(0x0E141C));
+    lv_style_set_bg_opa(&style_screen, LV_OPA_COVER);
+    lv_style_set_pad_all(&style_screen, 16);
+
+    lv_style_init(&style_title);
+    lv_style_set_text_color(&style_title, lv_color_hex(0xE1E6EE));
+    lv_style_set_text_font(&style_title, &lv_font_montserrat_20);
+
+    lv_style_init(&style_card);
+    lv_style_set_bg_color(&style_card, lv_color_hex(0x1B2533));
+    lv_style_set_bg_opa(&style_card, LV_OPA_COVER);
+    lv_style_set_radius(&style_card, 10);
+    lv_style_set_pad_all(&style_card, 12);
+    lv_style_set_border_color(&style_card, lv_color_hex(0x273142));
+    lv_style_set_border_width(&style_card, 1);
+
+    styles_initialized = true;
+}
 
 static void ensure_log_buffer_initialized(void)
 {
@@ -55,23 +84,23 @@ static bool trim_buffer_if_needed(size_t additional)
 lv_obj_t *logs_panel_create(void)
 {
     ensure_log_buffer_initialized();
+    ensure_styles_initialized();
 
     lv_obj_t *screen = lv_obj_create(NULL);
     lv_obj_remove_style_all(screen);
-    lv_obj_add_style(screen, lv_theme_custom_style_screen(), LV_PART_MAIN);
+    lv_obj_add_style(screen, &style_screen, LV_PART_MAIN);
     lv_obj_set_layout(screen, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(screen, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(screen, 18, LV_PART_MAIN);
 
     lv_obj_t *title = lv_label_create(screen);
-    lv_obj_add_style(title, lv_theme_custom_style_label(), LV_PART_MAIN);
+    lv_obj_add_style(title, &style_title, LV_PART_MAIN);
     lv_label_set_text(title, "Logs");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_24, LV_PART_MAIN);
 
     log_text_area = lv_textarea_create(screen);
     lv_obj_set_size(log_text_area, lv_pct(100), lv_pct(80));
-    lv_obj_add_style(log_text_area, lv_theme_custom_style_card(), LV_PART_MAIN);
+    lv_obj_add_style(log_text_area, &style_card, LV_PART_MAIN);
     lv_obj_set_style_bg_color(log_text_area, lv_color_hex(0x0F131A), LV_PART_MAIN);
     if (log_buffer[0] == '\0')
     {
